@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 
 import fastvideo.envs as envs
+from fastvideo.attention.backends.abstract import AttentionImpl
 from fastvideo.attention.selector import backend_name_to_enum, get_attn_backend
 from fastvideo.distributed.communication_op import (sequence_model_parallel_all_gather,
                                                     sequence_model_parallel_all_gather_async,
@@ -57,8 +60,23 @@ class DistributedAttention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.backend = backend_name_to_enum(attn_backend.get_name())
         self.dtype = dtype
+        self._default_qkv_layout_hooks = self._uses_default_qkv_layout_hooks()
 
-    @torch.compiler.disable
+    def _uses_default_qkv_layout_hooks(self) -> bool:
+        impl_cls = type(self.attn_impl)
+        return (impl_cls.preprocess_qkv is AttentionImpl.preprocess_qkv
+                and impl_cls.postprocess_output is AttentionImpl.postprocess_output)
+
+    def _can_use_single_rank_dense_path(
+        self,
+        world_size: int,
+        replicated_q: torch.Tensor | None,
+        replicated_k: torch.Tensor | None,
+        replicated_v: torch.Tensor | None,
+    ) -> bool:
+        return (world_size == 1 and replicated_q is None and replicated_k is None and replicated_v is None
+                and self._default_qkv_layout_hooks)
+
     def forward(
         self,
         q: torch.Tensor,
@@ -88,12 +106,74 @@ class DistributedAttention(nn.Module):
         """
         # Check input shapes
         assert q.dim() == 4 and k.dim() == 4 and v.dim() == 4, "Expected 4D tensors"
-        batch_size, _, num_heads, _ = q.shape
-        local_rank = get_sp_parallel_rank()
         world_size = get_sp_world_size()
 
         forward_context: ForwardContext = get_forward_context()
         ctx_attn_metadata = forward_context.attn_metadata
+
+        if self._can_use_single_rank_dense_path(world_size, replicated_q, replicated_k, replicated_v):
+            return self._forward_single_rank_dense(
+                q,
+                k,
+                v,
+                original_seq_len=original_seq_len,
+                freqs_cis=freqs_cis,
+                ctx_attn_metadata=ctx_attn_metadata,
+            )
+
+        return self._forward_sequence_parallel(
+            q,
+            k,
+            v,
+            original_seq_len=original_seq_len,
+            replicated_q=replicated_q,
+            replicated_k=replicated_k,
+            replicated_v=replicated_v,
+            freqs_cis=freqs_cis,
+            ctx_attn_metadata=ctx_attn_metadata,
+            world_size=world_size,
+        )
+
+    def _forward_single_rank_dense(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        original_seq_len: int | None,
+        freqs_cis: tuple[torch.Tensor, torch.Tensor] | None,
+        ctx_attn_metadata: Any,
+    ) -> tuple[torch.Tensor, None]:
+        original_seq_len = original_seq_len or q.shape[1]
+        pad_seq_len = q.shape[1] - original_seq_len
+        q = q[:, :original_seq_len, :, :]
+        k = k[:, :original_seq_len, :, :]
+        v = v[:, :original_seq_len, :, :]
+
+        if freqs_cis is not None:
+            cos, sin = freqs_cis
+            q = _apply_rotary_emb(q, cos, sin, is_neox_style=False)
+            k = _apply_rotary_emb(k, cos, sin, is_neox_style=False)
+
+        output = self.attn_impl.forward(q, k, v, ctx_attn_metadata)
+        output = torch.nn.functional.pad(output, (0, 0, 0, 0, 0, pad_seq_len))
+        return output, None
+
+    @torch.compiler.disable
+    def _forward_sequence_parallel(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        original_seq_len: int | None,
+        replicated_q: torch.Tensor | None,
+        replicated_k: torch.Tensor | None,
+        replicated_v: torch.Tensor | None,
+        freqs_cis: tuple[torch.Tensor, torch.Tensor] | None,
+        ctx_attn_metadata: Any,
+        world_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        batch_size, _, num_heads, _ = q.shape
+        local_rank = get_sp_parallel_rank()
 
         # Stack QKV
         qkv = torch.cat([q, k, v], dim=0)  # [3*batch, seq_len, num_heads, head_dim]
