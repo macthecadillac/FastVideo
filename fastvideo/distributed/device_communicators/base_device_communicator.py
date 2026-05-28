@@ -9,6 +9,55 @@ from torch import Tensor
 from torch.distributed import ProcessGroup, ReduceOp
 
 
+class AsyncCollectiveTensor:
+    """Handle for a non-autograd async collective that materializes a tensor on wait."""
+
+    def wait(self) -> Tensor:
+        raise NotImplementedError
+
+
+class CompletedCollectiveTensor(AsyncCollectiveTensor):
+
+    def __init__(self, tensor: Tensor) -> None:
+        self.tensor = tensor
+
+    def wait(self) -> Tensor:
+        return self.tensor
+
+
+class AsyncAllGatherTensor(AsyncCollectiveTensor):
+
+    def __init__(self,
+                 output_tensor: Tensor,
+                 input_size: torch.Size,
+                 dim: int,
+                 world_size: int,
+                 work: Any,
+                 gather_stream: torch.cuda.Stream | None = None) -> None:
+        self.output_tensor = output_tensor
+        self.input_size = input_size
+        self.dim = dim
+        self.world_size = world_size
+        self.work = work
+        self.gather_stream = gather_stream
+        self.result: Tensor | None = None
+
+    def wait(self) -> Tensor:
+        if self.result is not None:
+            return self.result
+
+        self.work.wait()
+        if self.gather_stream is not None:
+            torch.cuda.current_stream(self.output_tensor.device).wait_stream(self.gather_stream)
+
+        output_tensor = self.output_tensor.reshape((self.world_size, ) + self.input_size)
+        output_tensor = output_tensor.movedim(0, self.dim)
+        self.result = output_tensor.reshape(self.input_size[:self.dim] +
+                                            (self.world_size * self.input_size[self.dim], ) +
+                                            self.input_size[self.dim + 1:])
+        return self.result
+
+
 class DistributedAutograd:
     """Collection of autograd functions for distributed operations.
     
@@ -216,6 +265,12 @@ class DeviceCommunicatorBase:
         self.global_rank = dist.get_rank()
         self.global_world_size = dist.get_world_size()
         self.rank_in_group = dist.get_group_rank(self.cpu_group, self.global_rank)
+        self._async_collective_stream: torch.cuda.Stream | None = None
+
+    def _get_async_collective_stream(self, device: torch.device) -> torch.cuda.Stream:
+        if self._async_collective_stream is None:
+            self._async_collective_stream = torch.cuda.Stream(device=device)
+        return self._async_collective_stream
 
     def all_reduce(self, input_: torch.Tensor, op: dist.ReduceOp | None = ReduceOp.SUM) -> torch.Tensor:
         """Performs an all_reduce operation with gradient support."""
@@ -226,6 +281,34 @@ class DeviceCommunicatorBase:
         if dim < 0:
             dim += input_.dim()
         return DistributedAutograd.AllGather.apply(self.device_group, input_, self.world_size, dim)
+
+    def all_gather_async(self, input_: torch.Tensor, dim: int = -1) -> AsyncCollectiveTensor:
+        """Starts a non-autograd all_gather and returns a waitable tensor handle."""
+        if dim < 0:
+            dim += input_.dim()
+        if torch.is_grad_enabled() and input_.requires_grad:
+            raise RuntimeError("all_gather_async does not support autograd; use all_gather instead.")
+
+        # NCCL all_gather_into_tensor requires contiguous tensors.
+        if not input_.is_contiguous():
+            input_ = input_.contiguous()
+        input_size = input_.size()
+        output_size = (input_size[0] * self.world_size, ) + input_size[1:]
+        output_tensor = torch.empty(output_size, dtype=input_.dtype, device=input_.device)
+
+        gather_stream = None
+        if input_.device.type == "cuda":
+            current_stream = torch.cuda.current_stream(input_.device)
+            gather_stream = self._get_async_collective_stream(input_.device)
+            gather_stream.wait_stream(current_stream)
+            input_.record_stream(gather_stream)
+            output_tensor.record_stream(gather_stream)
+            with torch.cuda.stream(gather_stream):
+                work = dist.all_gather_into_tensor(output_tensor, input_, group=self.device_group, async_op=True)
+        else:
+            work = dist.all_gather_into_tensor(output_tensor, input_, group=self.device_group, async_op=True)
+
+        return AsyncAllGatherTensor(output_tensor, input_size, dim, self.world_size, work, gather_stream)
 
     def slice(self, input_: torch.Tensor, dim: int = -1, *, scale_grad: bool) -> torch.Tensor:
         """Performs rank-local slicing with all-gather backward."""

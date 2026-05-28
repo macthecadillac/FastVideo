@@ -3,6 +3,7 @@
 
 import torch
 
+from fastvideo.distributed.device_communicators.base_device_communicator import AsyncCollectiveTensor
 from fastvideo.distributed.parallel_state import (get_sp_group, get_sp_world_size, get_tp_group,
                                                   model_parallel_is_initialized)
 from fastvideo.distributed.utils import (unpad_sequence_tensor, compute_padding_for_sp, pad_sequence_tensor)
@@ -35,6 +36,11 @@ def sequence_model_parallel_all_to_all_4D(input_: torch.Tensor,
 def sequence_model_parallel_all_gather(input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """All-gather the input tensor across model parallel group."""
     return get_sp_group().all_gather(input_, dim)
+
+
+def sequence_model_parallel_all_gather_async(input_: torch.Tensor, dim: int = -1) -> AsyncCollectiveTensor:
+    """Start a non-autograd sequence-parallel all-gather."""
+    return get_sp_group().all_gather_async(input_, dim)
 
 
 def sequence_model_parallel_all_gather_with_unpad(input_: torch.Tensor,

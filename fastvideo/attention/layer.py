@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from fastvideo.attention.selector import backend_name_to_enum, get_attn_backend
 from fastvideo.distributed.communication_op import (sequence_model_parallel_all_gather,
+                                                    sequence_model_parallel_all_gather_async,
                                                     sequence_model_parallel_all_to_all_4D)
 from fastvideo.distributed.parallel_state import (get_sp_parallel_rank, get_sp_world_size)
 from fastvideo.forward_context import ForwardContext, get_forward_context
@@ -126,18 +127,23 @@ class DistributedAttention(nn.Module):
 
         # Redistribute back if using sequence parallelism
         replicated_output = None
+        replicated_output_gather = None
         if replicated_q is not None:
             split_idx = original_seq_len
-            replicated_output = output[:, split_idx:]
+            local_replicated_output = output[:, split_idx:].contiguous()
             output = output[:, :split_idx]
-            # TODO: make this asynchronous
-            replicated_output = sequence_model_parallel_all_gather(replicated_output.contiguous(), dim=2)
+            if torch.is_grad_enabled() and local_replicated_output.requires_grad:
+                replicated_output = sequence_model_parallel_all_gather(local_replicated_output, dim=2)
+            else:
+                replicated_output_gather = sequence_model_parallel_all_gather_async(local_replicated_output, dim=2)
         # Apply backend-specific postprocess_output
         output = self.attn_impl.postprocess_output(output, ctx_attn_metadata)
 
         output = torch.nn.functional.pad(output, (0, 0, 0, 0, 0, pad_seq_len))
 
         output = sequence_model_parallel_all_to_all_4D(output, scatter_dim=1, gather_dim=2)
+        if replicated_output_gather is not None:
+            replicated_output = replicated_output_gather.wait()
 
         return output, replicated_output
 
