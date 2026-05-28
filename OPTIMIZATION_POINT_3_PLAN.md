@@ -6,8 +6,8 @@ every transformer block, and every self-attention layer.
 
 ## Handoff State
 
-Last updated: 2026-05-28 after Stage 3 was pushed to
-`origin/attn-hot-path`.
+Last updated: 2026-05-28 after the Stage 4 first graph-break slice was
+validated and committed as `13b0d07d`.
 
 Branch state:
 
@@ -17,6 +17,7 @@ Branch state:
   - `12a70f4a` `[perf]: reduce SP all-to-all layout traffic`
   - `18021fe7` `[perf]: add guarded async replicated gather`
   - `b3f6a3c1` `[perf]: expose VSA tile selection`
+  - `13b0d07d` `[perf]: compile dense single-rank attention`
 - Known unrelated workspace state remains outside these commits:
   `fastvideo/tests/modal/launch_l40s_job.py` is staged from earlier workspace
   state, and several root/local artifacts remain untracked. Do not include or
@@ -46,6 +47,11 @@ Completed milestones:
   `video_sparse_attn_bshd` is installed. It also removed generic `BSA_ATTN`
   from `DenoisingStage`'s allowlist because that stage does not build BSA
   metadata; LongCat's dedicated BSA path is unchanged.
+- Stage 4 first slice moved the compiler boundary inside generic
+  `DistributedAttention`: dense SP=1 calls with no replicated tokens and default
+  QKV layout hooks now skip QKV concat/chunk plus no-op all-to-all and can be
+  captured by `torch.compile(..., fullgraph=True)`. The multi-rank and
+  sparse-layout fallback remains behind `@torch.compiler.disable`.
 
 Validation summary:
 
@@ -57,31 +63,33 @@ Validation summary:
   - `pytest fastvideo/tests/distributed/test_all_to_all_4d_layout.py -sv`
   - `pytest fastvideo/tests/distributed/test_async_all_gather.py -sv`
   - `pytest fastvideo/tests/attention/test_sparse_attention_wiring.py -sv`
+  - `pytest fastvideo/tests/attention/test_distributed_attention_compile.py -sv`
   - `pytest fastvideo/tests/distributed/test_sp_wan.py fastvideo/tests/distributed/test_sp_ltx2.py fastvideo/tests/distributed/test_sp_hunyuanvideo.py -sv`
 - Modal benchmark runs are documented in the per-stage handoff notes below,
   including app IDs and headline timings.
 
 Next resume point:
 
-- Start with Phase 4 / Stage 4: graph breaks around attention. The least risky
-  first slice is the dense SP=1 path in generic `DistributedAttention`, because
-  it can avoid QKV concatenation/all-to-all and is the only place where removing
-  `@torch.compiler.disable` should be attempted before distributed collectives
-  are involved.
-- Before editing Stage 4, re-read `fastvideo/attention/layer.py`,
-  `fastvideo/pipelines/composed_pipeline_base.py`, and the existing compile
-  tests. Add or extend a tiny compile/eager parity test before changing
-  compiler annotations.
+- Continue Phase 4 with model-level compile coverage: add a tiny Wan-like
+  eager-vs-compiled path that exercises the repository's `_compile_conditions`
+  / `enable_torch_compile` plumbing, now that the attention wrapper itself has
+  a fullgraph-covered SP=1 dense path.
+- Keep distributed collectives and sparse-layout hooks out of the compiled
+  path until there is a dedicated test proving Dynamo behavior for those
+  branches.
 - Continue updating this `Handoff State` section after every major milestone
   before compacting or ending a long session.
 
 ## Current State
 
 The central generic path is `fastvideo/attention/layer.py::DistributedAttention`.
-It is currently marked `@torch.compiler.disable`, concatenates Q/K/V, runs a
-sequence-parallel all-to-all, optionally applies RoPE, optionally appends
-replicated tokens, chunks Q/K/V again, runs the selected attention backend, and
-then runs a second all-to-all.
+It now has a compile-visible `forward` that dispatches dense SP=1 calls with no
+replicated tokens and default QKV layout hooks into `_forward_single_rank_dense`.
+That direct path trims SP padding, applies optional RoPE to Q/K, calls the
+selected attention backend without QKV concat/chunk or all-to-all, then pads the
+output back. Multi-rank, replicated-token, and sparse-layout paths still route
+through `_forward_sequence_parallel`, which remains marked
+`@torch.compiler.disable`.
 
 The sequence-parallel 4D all-to-all implementation lives in
 `fastvideo/distributed/device_communicators/base_device_communicator.py`. It
@@ -460,6 +468,58 @@ Acceptance:
 - Compile no longer sees the dense SP=1 wrapper as a graph break.
 - No output drift beyond expected floating-point tolerance.
 - Warmup cost and steady-state latency are reported separately.
+
+Stage 4 first-slice handoff:
+
+- Status: implemented, committed as `13b0d07d`, and remotely validated on Modal
+  L40S:1/L40S:2.
+- Current edits: `fastvideo/attention/layer.py` and
+  `fastvideo/tests/attention/test_distributed_attention_compile.py`.
+- `DistributedAttention.forward` is no longer globally compiler-disabled.
+  Dense SP=1 calls use `_forward_single_rank_dense` when there are no
+  replicated tokens and the selected backend uses the default QKV
+  preprocess/postprocess hooks. This keeps sparse/BSA/VSA layout hooks on the
+  existing fallback.
+- `_forward_single_rank_dense` avoids the previous QKV `cat`, no-op
+  single-rank all-to-all, QKV `chunk`, and final no-op all-to-all. It preserves
+  the prior trim/RoPE/pad behavior.
+- `_forward_sequence_parallel` contains the previous distributed implementation
+  and remains `@torch.compiler.disable`, so SP>1 collectives are not newly
+  exposed to Dynamo.
+- The new compile test runs under `torchrun --nproc_per_node=1`, initializes
+  FastVideo distributed state with `sp_size=1`, verifies the direct path does
+  not call `sequence_model_parallel_all_to_all_4D`, compares against
+  `LocalAttention` with RoPE and padding, and verifies
+  `torch.compile(distributed_attention.forward, backend="eager",
+  fullgraph=True)` matches eager output.
+- Local validation completed:
+  `python -m py_compile fastvideo/attention/layer.py fastvideo/tests/attention/test_distributed_attention_compile.py`.
+- Pre-commit completed:
+  `pre-commit run --files fastvideo/attention/layer.py fastvideo/tests/attention/test_distributed_attention_compile.py`.
+- Modal compile/correctness test completed on app
+  `ap-ARuc2XCOIktTlFMhciiBfB`:
+  `pytest fastvideo/tests/attention/test_distributed_attention_compile.py -sv`
+  passed. That run used `--install-extra dev`; the test forces `TORCH_SDPA`.
+- FlashAttention SP=1 benchmark before the patch completed on app
+  `ap-zyQ03eA9KX7VbNrBVwEC5B` with `--install-extra none`:
+  `distributed_attention_dense` max rank average 0.231014 ms and peak
+  allocated memory 113,246,720 bytes.
+- FlashAttention SP=1 benchmark after the patch completed on app
+  `ap-go5Ae0Rz3vC9xFHRxpEPzA` with the same command and
+  `--install-extra none`: max rank average 0.202752 ms and peak allocated
+  memory 88,080,896 bytes.
+- A benchmark attempt on app `ap-15usZhJT9bCM6sTS3veFRZ` is intentionally not
+  used for comparison: installing `.[dev]` upgraded the environment to a torch
+  build without `flash_attn`, so the benchmark fell back to SDPA and rejected
+  the requested `FLASH_ATTN` backend.
+- Existing SP gradient parity completed on app `ap-VaLs2XofuIeBEMaPjPjAR1`
+  with the patch applied:
+  `pytest fastvideo/tests/distributed/test_sp_wan.py fastvideo/tests/distributed/test_sp_ltx2.py fastvideo/tests/distributed/test_sp_hunyuanvideo.py -sv`
+  passed 3 tests in 78.90 seconds.
+- Resume point: the next Stage 4 slice should add model-level
+  `enable_torch_compile` coverage for a tiny Wan-like model or pipeline compile
+  path. Do not remove the fallback compiler disable around SP>1 collectives
+  until a dedicated distributed compile test exists.
 
 ## Phase 5: End-to-End Validation
 
