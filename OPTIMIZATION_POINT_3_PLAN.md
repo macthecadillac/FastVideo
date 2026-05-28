@@ -6,8 +6,8 @@ every transformer block, and every self-attention layer.
 
 ## Handoff State
 
-Last updated: 2026-05-28 after the Stage 4 first graph-break slice was
-validated and committed as `13b0d07d`.
+Last updated: 2026-05-28 after adding the stage-by-stage performance gains
+summary.
 
 Branch state:
 
@@ -79,6 +79,175 @@ Next resume point:
   branches.
 - Continue updating this `Handoff State` section after every major milestone
   before compacting or ending a long session.
+
+## Performance Gains by Stage
+
+All numbers below come from the Modal L40S benchmark and validation runs
+recorded in the stage handoff notes. They are microbenchmark results, not a
+full end-to-end serving latency claim. The safe interpretation is per-hot-path
+speedup under the synthetic shapes in `tests/local_tests/benchmark_attention_sp.py`.
+
+### Stage 0: Baseline Harness
+
+Stage 0 did not change runtime behavior. It added the benchmark harness and
+recorded the reference numbers used by later stages.
+
+Baseline measurements:
+
+- SP=2 heads-to-sequence all-to-all:
+  3.699 ms max rank average.
+- SP=2 sequence-to-heads all-to-all:
+  1.110 ms max rank average.
+- SP=2 replicated-token all-gather:
+  0.160 ms max rank average.
+- SP=2 dense FlashAttention wrapper:
+  1.780 ms max rank average.
+- Sparse metadata construction:
+  VSA 15.95 us, BSA 3.30 us, VMoBA 2.30 us.
+
+Performance result:
+
+- No speedup claimed. The gain was observability: the repo now has a JSON
+  benchmark that isolates communication, attention wrapper, replicated-token
+  gather, and sparse metadata paths without model weights.
+
+### Stage 1: Sequence-Parallel All-To-All Layout Traffic
+
+Measured gains:
+
+- Heads-to-sequence all-to-all improved from 3.699 ms to 1.032 ms.
+  This is a 72.1% latency reduction, or 3.58x faster.
+- Sequence-to-heads all-to-all improved from 1.110 ms to 0.399 ms.
+  This is a 64.1% latency reduction, or 2.78x faster.
+- The combined two-direction communication microbenchmark improved from
+  4.809 ms to 1.431 ms. This is a 70.2% reduction, or 3.36x faster.
+- Dense SP=2 FlashAttention wrapper timing stayed flat: 1.780 ms before and
+  1.772 ms after, a 0.4% difference within noise for the end-to-end wrapper
+  benchmark.
+- Reported peak allocation for the communication benchmark stayed unchanged.
+
+What caused the gain:
+
+- The heads-to-sequence path stopped materializing `split(...); cat(...)`
+  chunks after the receive buffer and instead reshaped/permuted directly into
+  attention layout.
+- The sequence-to-heads path now uses direct contiguous packing when the input
+  is contiguous, while preserving the older transpose-first packing for
+  non-contiguous attention outputs. That fallback matters: an always-direct
+  attempt regressed dense attention from about 1.78 ms to 6.21 ms.
+
+Performance interpretation:
+
+- Stage 1 produced the largest isolated communication gain so far.
+- The dense attention wrapper did not get faster in the synthetic SP=2 run
+  because the measured attention kernel and other wrapper work dominate that
+  particular end-to-end microbenchmark. The isolated all-to-all win is still
+  substantial and should matter most in profiles where communication/layout
+  traffic is a visible share of block time.
+
+### Stage 2: Async Replicated-Token Gather
+
+Measured gains:
+
+- Replicated-token attention with the synchronous gather measured 5.590 ms.
+- The final async placement measured 5.364 ms.
+- This is a 4.0% latency reduction, or 1.04x faster, for the replicated-token
+  attention microbenchmark.
+- A first async attempt measured 6.517 ms, a 16.6% regression versus sync. That
+  version waited after the following all-to-all and was not kept.
+
+What caused the gain:
+
+- The accepted implementation starts the replicated-output all-gather, performs
+  independent local postprocess/padding work, waits for the gather, and only
+  then starts the following main-output all-to-all.
+- The path is inference-only and opt-in via
+  `FASTVIDEO_ASYNC_REPLICATED_GATHER=1`; training and the default inference path
+  remain synchronous.
+
+Performance interpretation:
+
+- The measured speedup is modest but real on the synthetic replicated-token
+  shape.
+- The result is sensitive to wait placement. Starting an async collective is not
+  enough; the code must have useful local work between launch and wait, and it
+  must avoid overlapping independent NCCL collectives in a way that serializes
+  worse than the sync path.
+- Because the win is narrow and shape-dependent, Stage 2 intentionally did not
+  make async replicated gathers the default.
+
+### Stage 3: Sparse-Attention Fast-Path Selection
+
+Measured results:
+
+- The Modal L40S image did not include `video_sparse_attn_bshd`, so
+  `FASTVIDEO_VSA_TILE_SIZE=auto` and explicit 256-token requests correctly fell
+  back to the legacy `(4, 4, 4)` tile.
+- Stage 0 VSA metadata baseline was 15.95 us.
+- Stage 3 default VSA metadata run measured 23.900 us with `(4, 4, 4)`.
+- Stage 3 auto fallback metadata run measured 14.367 us, still with
+  `(4, 4, 4)` after fallback.
+
+What changed:
+
+- VSA tile size is now explicit in metadata and configurable by
+  `FASTVIDEO_VSA_TILE_SIZE` or the benchmark's `--vsa-tile-size`.
+- The 256-token BSHD path is now reachable when `video_sparse_attn_bshd` is
+  installed, while the default remains the legacy 64-token tile.
+- Generic `BSA_ATTN` was removed from `DenoisingStage`'s allowlist because that
+  stage does not build BSA metadata.
+
+Performance interpretation:
+
+- No production speedup is claimed for Stage 3 on the current L40S image. The
+  fast BSHD kernel dependency was unavailable, so the benchmark could only
+  validate fallback behavior.
+- The metadata numbers should be treated as validation and run-to-run context,
+  not as a claimed VSA speedup. The default run was slower than Stage 0, while
+  the auto fallback run was slightly faster; both used the same fallback tile.
+- The performance value of Stage 3 is enabling and safety work: it makes the
+  fast sparse path selectable and inspectable on images where the kernel exists,
+  and it prevents the generic denoising stage from selecting unsupported BSA
+  wiring.
+
+### Stage 4: Dense SP=1 Compile-Visible Direct Path
+
+Measured gains:
+
+- Dense SP=1 FlashAttention wrapper before the patch measured 0.231014 ms.
+- Dense SP=1 FlashAttention wrapper after the patch measured 0.202752 ms.
+- This is a 12.2% latency reduction, or 1.14x faster.
+- Peak allocated memory dropped from 113,246,720 bytes to 88,080,896 bytes.
+  This is a 22.2% reduction, or 24 MiB less peak allocation in the benchmark.
+
+What caused the gain:
+
+- Dense SP=1 calls with no replicated tokens and default QKV layout hooks now
+  skip QKV `cat`, no-op single-rank all-to-all, QKV `chunk`, and final no-op
+  all-to-all.
+- `DistributedAttention.forward` is compile-visible for that dense SP=1 branch,
+  and the distributed/sparse fallback remains behind `@torch.compiler.disable`.
+
+Performance interpretation:
+
+- Stage 4 is the clearest direct attention-wrapper win so far.
+- The gain applies only to dense SP=1 calls that do not use replicated tokens
+  and do not require backend-specific QKV layout hooks.
+- The full model-level compile benefit is not measured yet. The next Stage 4
+  slice should add a tiny Wan-like eager-vs-compiled model test that exercises
+  `_compile_conditions` or `enable_torch_compile` end to end.
+
+### Cumulative Readout
+
+- Biggest isolated communication win: Stage 1, with the two all-to-all
+  directions together dropping from 4.809 ms to 1.431 ms.
+- Biggest direct attention-wrapper win: Stage 4, with dense SP=1 FlashAttention
+  dropping from 0.231014 ms to 0.202752 ms and peak allocation dropping by
+  24 MiB.
+- Narrow opt-in overlap win: Stage 2, with replicated-token attention dropping
+  from 5.590 ms to 5.364 ms when async gather is explicitly enabled.
+- Enabling/safety stage without measured speedup on this image: Stage 3, because
+  the BSHD sparse kernel was not installed on the Modal L40S image.
 
 ## Current State
 
