@@ -4,6 +4,77 @@ This expands point 3 from `OPTIMIZATION.md` against the codebase as it currently
 stands. The plan focuses on repeated video DiT hot paths: every denoising step,
 every transformer block, and every self-attention layer.
 
+## Handoff State
+
+Last updated: 2026-05-28 after Stage 3 was pushed to
+`origin/attn-hot-path`.
+
+Branch state:
+
+- Current branch: `attn-hot-path`.
+- Pushed optimization commits:
+  - `035eb7e2` `[perf]: add attention SP benchmark harness`
+  - `12a70f4a` `[perf]: reduce SP all-to-all layout traffic`
+  - `18021fe7` `[perf]: add guarded async replicated gather`
+  - `b3f6a3c1` `[perf]: expose VSA tile selection`
+- Known unrelated workspace state remains outside these commits:
+  `fastvideo/tests/modal/launch_l40s_job.py` is staged from earlier workspace
+  state, and several root/local artifacts remain untracked. Do not include or
+  revert them unless the user explicitly asks.
+
+Completed milestones:
+
+- Stage 0 added `tests/local_tests/benchmark_attention_sp.py` and made the
+  benchmark emit JSON summaries for communication, attention, and sparse
+  metadata cases. Modal L40S:2 baselines were recorded for communication,
+  metadata, and dense FlashAttention.
+- Stage 1 rewrote sequence-parallel all-to-all layout packing. The
+  heads-to-sequence path avoids `split(...); cat(...)`; the sequence-to-heads
+  path uses direct packing only for contiguous inputs and keeps the older
+  transpose-first path for non-contiguous attention outputs. Modal benchmarks
+  improved heads-to-sequence all-to-all from 3.699 ms to 1.032 ms and
+  sequence-to-heads from 1.110 ms to 0.399 ms, with dense attention flat.
+- Stage 2 added an opt-in inference-only async SP all-gather handle for
+  replicated-token attention outputs behind
+  `FASTVIDEO_ASYNC_REPLICATED_GATHER=1`. The default remains synchronous.
+  Correctness and existing SP gradient parity passed on Modal. The replicated
+  attention microbenchmark improved from 5.590 ms sync to 5.364 ms async when
+  the wait happens before the following all-to-all.
+- Stage 3 made VSA tile size explicit in metadata, added
+  `FASTVIDEO_VSA_TILE_SIZE`, kept `(4, 4, 4)` as the default, and exposed
+  `auto` selection for the `(4, 8, 8)` BSHD path only when
+  `video_sparse_attn_bshd` is installed. It also removed generic `BSA_ATTN`
+  from `DenoisingStage`'s allowlist because that stage does not build BSA
+  metadata; LongCat's dedicated BSA path is unchanged.
+
+Validation summary:
+
+- Local syntax checks were run with `python -m py_compile` for touched Python
+  files in each stage.
+- Pre-commit was run on each committed slice with the repository's configured
+  hooks.
+- Modal L40S tests run during the completed stages:
+  - `pytest fastvideo/tests/distributed/test_all_to_all_4d_layout.py -sv`
+  - `pytest fastvideo/tests/distributed/test_async_all_gather.py -sv`
+  - `pytest fastvideo/tests/attention/test_sparse_attention_wiring.py -sv`
+  - `pytest fastvideo/tests/distributed/test_sp_wan.py fastvideo/tests/distributed/test_sp_ltx2.py fastvideo/tests/distributed/test_sp_hunyuanvideo.py -sv`
+- Modal benchmark runs are documented in the per-stage handoff notes below,
+  including app IDs and headline timings.
+
+Next resume point:
+
+- Start with Phase 4 / Stage 4: graph breaks around attention. The least risky
+  first slice is the dense SP=1 path in generic `DistributedAttention`, because
+  it can avoid QKV concatenation/all-to-all and is the only place where removing
+  `@torch.compiler.disable` should be attempted before distributed collectives
+  are involved.
+- Before editing Stage 4, re-read `fastvideo/attention/layer.py`,
+  `fastvideo/pipelines/composed_pipeline_base.py`, and the existing compile
+  tests. Add or extend a tiny compile/eager parity test before changing
+  compiler annotations.
+- Continue updating this `Handoff State` section after every major milestone
+  before compacting or ending a long session.
+
 ## Current State
 
 The central generic path is `fastvideo/attention/layer.py::DistributedAttention`.
