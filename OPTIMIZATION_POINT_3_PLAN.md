@@ -145,6 +145,51 @@ Acceptance:
 - At least one measured reduction in layout conversion time or allocation count
   before moving to higher-risk async work.
 
+Stage 1 handoff:
+
+- Status: implemented and remotely validated on Modal L40S:2.
+- Current edits:
+  `fastvideo/distributed/device_communicators/base_device_communicator.py` and
+  `fastvideo/tests/distributed/test_all_to_all_4d_layout.py`.
+- The heads-to-sequence all-to-all no longer materializes Python split chunks
+  before concatenation. It reshapes the all-to-all receive buffer as
+  `[source_rank, local_head, local_seq, batch, head_dim]` and directly emits the
+  `[batch, full_seq, local_head, head_dim]` layout.
+- The sequence-to-heads all-to-all prepares the send buffer directly from the
+  original `[batch, full_seq, local_head, head_dim]` layout when that input is
+  contiguous.
+- Non-contiguous sequence-to-heads input keeps the older transpose-first
+  packing path. A first attempt to always use the direct packing path made the
+  dense FlashAttention benchmark regress from roughly 1.78 ms to 6.21 ms, so
+  the final patch keeps the optimized path only where the benchmark supports
+  it.
+- Both directions now fail early if the scattered dimension is not divisible by
+  SP world size.
+- Deterministic layout coverage was added for both directions plus a
+  heads-to-sequence/sequence-to-heads round trip and backward pass. The
+  sequence-to-heads test covers both contiguous and non-contiguous inputs.
+- Local validation completed:
+  `python -m py_compile fastvideo/distributed/device_communicators/base_device_communicator.py fastvideo/tests/distributed/test_all_to_all_4d_layout.py`.
+- Local `pytest fastvideo/tests/distributed/test_all_to_all_4d_layout.py -q`
+  is blocked in this CPU-only sandbox because `fastvideo/tests/conftest.py`
+  imports `fastvideo_kernel`, which initializes Triton without a CUDA driver.
+- Modal validation completed:
+  `pytest fastvideo/tests/distributed/test_all_to_all_4d_layout.py -sv`
+  on app `ap-ucaalOc51Qqu6hzcWj8iEX`.
+- Existing SP parity completed:
+  `pytest fastvideo/tests/distributed/test_sp_wan.py fastvideo/tests/distributed/test_sp_ltx2.py fastvideo/tests/distributed/test_sp_hunyuanvideo.py -sv`
+  on app `ap-XFEMqVglGkcfPMCy5rB63L`; all 3 tests passed.
+- Final communication benchmark completed on app `ap-ZoPvIb0S7qDAnFVlQ8xzBu`.
+  Compared with Stage 0, heads-to-sequence all-to-all improved from 3.699 ms
+  to 1.032 ms, sequence-to-heads all-to-all improved from 1.110 ms to
+  0.399 ms, and reported peak allocation stayed unchanged.
+- Final dense FlashAttention benchmark completed on app
+  `ap-NTug2obs5Bo4U8RgrLhPKO`: distributed attention max rank average
+  1.772 ms, flat to the 1.780 ms Stage 0 baseline.
+- Resume point: Stage 1 is ready to commit. Stage 2 should start with
+  inference-only async gather experiments, not additional all-to-all rewrites,
+  unless a real model trace exposes another layout-specific issue.
+
 ## Phase 2: Overlap Independent Collectives
 
 Do not start by making the main attention all-to-alls async. The attention

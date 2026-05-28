@@ -146,6 +146,8 @@ class DistributedAutograd:
 
             if scatter_dim == 2 and gather_dim == 1:
                 bs, shard_seqlen, hn, hd = input_.shape
+                if hn % world_size != 0:
+                    raise ValueError(f"head dimension {hn} must be divisible by world_size {world_size}")
                 seqlen = shard_seqlen * world_size
                 shard_hn = hn // world_size
 
@@ -154,21 +156,27 @@ class DistributedAutograd:
 
                 dist.all_to_all_single(output, input_, group=group)  # hn, shard_seqlen, bs, hd
 
-                output = torch.cat(output.split(shard_hn), dim=1)  # sharded hn, seqlen, bs, hd
-
-                output = output.transpose(0, 2).contiguous()  # bs, seqlen, sharded_hn, hd
-
-                return output
+                # Interpret the received head chunks as
+                # [source_rank, local_head, local_seq, batch, head_dim], then
+                # produce the attention layout directly. This preserves the
+                # prior token/head order without materializing split chunks.
+                output = output.reshape(world_size, shard_hn, shard_seqlen, bs, hd)
+                output = output.permute(3, 0, 2, 1, 4).reshape(bs, seqlen, shard_hn, hd)
+                return output.contiguous()
             elif scatter_dim == 1 and gather_dim == 2:
                 bs, seqlen, shard_hn, hd = input_.shape
+                if seqlen % world_size != 0:
+                    raise ValueError(f"sequence length {seqlen} must be divisible by world_size {world_size}")
                 hn = shard_hn * world_size
                 shard_seqlen = seqlen // world_size
 
-                input_ = input_.transpose(0, 2).contiguous()  # shard_hn, seqlen, bs, hd
-
-                input_ = input_.reshape(shard_hn, world_size, shard_seqlen, bs,
-                                        hd).transpose(0, 1).reshape(shard_hn * world_size, shard_seqlen, bs,
-                                                                    hd).contiguous()
+                if input_.is_contiguous():
+                    input_ = input_.reshape(bs, world_size, shard_seqlen, shard_hn, hd)
+                    input_ = input_.permute(1, 3, 2, 0, 4).reshape(hn, shard_seqlen, bs, hd).contiguous()
+                else:
+                    input_ = input_.transpose(0, 2).contiguous()  # shard_hn, seqlen, bs, hd
+                    input_ = input_.reshape(shard_hn, world_size, shard_seqlen, bs, hd)
+                    input_ = input_.transpose(0, 1).reshape(hn, shard_seqlen, bs, hd).contiguous()
 
                 output = torch.empty_like(input_)
 
