@@ -1,0 +1,213 @@
+FROM docker.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+SHELL ["/bin/bash", "-c"]
+
+# install basic packages
+RUN <<EOF
+set -eux
+# add npm repo
+apt-get update
+apt-get install -y --no-install-recommends curl
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+
+# add necessary packages
+apt-get update
+apt-get install -y --no-install-recommends \
+    wget \
+    git \
+    ca-certificates \
+    openssh-server \
+    zsh \
+    vim \
+    curl \
+    gcc-11 \
+    g++-11 \
+    bubblewrap \
+    fd-find \
+    fish \
+    nodejs \
+    less \
+    lsof \
+    manpages \
+    ripgrep \
+    rsync \
+    sudo \
+    time \
+    tree \
+    tzdata \
+    tmux \
+    unzip \
+    xdg-user-dirs \
+    zip
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+# Set up C++20 compilers for ThunderKittens
+update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 --slave /usr/bin/g++ g++ /usr/bin/g++-11
+EOF
+
+RUN <<EOF
+# set up ssh
+set -eux
+ssh-keygen -A
+mkdir -p /run/sshd
+chmod 0755 /run/sshd
+mkdir -p /etc/ssh/sshd_config.d
+printf '%s\n' \
+    "PermitRootLogin yes" \
+    "PasswordAuthentication no" \
+    > /etc/ssh/sshd_config.d/99-mac-workstation.conf
+
+# set up toolbox user
+useradd -m -s /usr/bin/fish -p '!' toolbox
+mkdir -p /home/toolbox/.ssh
+chmod 700 /home/toolbox/.ssh
+EOF
+
+WORKDIR /home/toolbox/FastVideo
+
+# Set CUDA environment variables
+ENV HOME=/home/toolbox
+ENV CUDA_HOME=/usr/local/cuda-12.8
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
+
+# Keep Python tool installs under /home/toolbox and expose them without
+# relying on bash-specific startup files. The runtime user uses fish.
+ENV UV_INSTALL_DIR=/home/toolbox/.local/bin
+ENV UV_PYTHON_INSTALL_DIR=/home/toolbox/.local/share/uv/python
+ENV UV_CACHE_DIR=/home/toolbox/.cache/uv
+ENV VIRTUAL_ENV=/home/toolbox/venv
+ENV PATH=${VIRTUAL_ENV}/bin:${UV_INSTALL_DIR}:${CUDA_HOME}/bin:${PATH}
+
+# Copy just the pyproject.toml first to leverage Docker cache
+COPY pyproject.toml ./
+
+# Create virtual environment with specific Python version and seed
+RUN <<EOF
+set -eux
+# Create a dummy README to satisfy the installation
+echo "# Placeholder" > README.md
+
+# Install uv into /home/toolbox/.local/bin.
+mkdir -p "${UV_INSTALL_DIR}" "${UV_PYTHON_INSTALL_DIR}" "${UV_CACHE_DIR}"
+curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh
+
+# set up flash attention
+uv python install 3.12
+uv venv --managed-python --python 3.12 --seed "${VIRTUAL_ENV}"
+uv pip install --no-cache-dir --upgrade pip
+uv pip install --no-cache-dir ".[dev]"
+uv pip install --no-cache-dir https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl
+EOF
+
+COPY . .
+
+# Install dependencies using uv
+RUN <<EOF
+set -eux
+pwd
+uv pip install --no-cache-dir -e ".[dev]"
+git config --unset-all http.https://github.com/.extraheader || true
+EOF
+
+# Configure runtime shells for the toolbox user. Docker ENV covers normal
+# container processes; these files cover SSH/login shells, including fish.
+RUN <<EOF
+set -eux
+cat > /home/toolbox/.profile <<'PROFILE'
+export UV_INSTALL_DIR=/home/toolbox/.local/bin
+export UV_PYTHON_INSTALL_DIR=/home/toolbox/.local/share/uv/python
+export UV_CACHE_DIR=/home/toolbox/.cache/uv
+
+case ":$PATH:" in
+    *":$UV_INSTALL_DIR:"*) ;;
+    *) export PATH="$UV_INSTALL_DIR:$PATH" ;;
+esac
+
+if [ "${VIRTUAL_ENV:-}" != "/home/toolbox/venv" ] && [ -f /home/toolbox/venv/bin/activate ]; then
+    . /home/toolbox/venv/bin/activate
+else
+    export VIRTUAL_ENV=/home/toolbox/venv
+    case ":$PATH:" in
+        *":$VIRTUAL_ENV/bin:"*) ;;
+        *) export PATH="$VIRTUAL_ENV/bin:$PATH" ;;
+    esac
+fi
+PROFILE
+
+cat > /home/toolbox/.bashrc <<'BASHRC'
+if [ -f "$HOME/.profile" ]; then
+    . "$HOME/.profile"
+fi
+BASHRC
+
+cat > /home/toolbox/.zshrc <<'ZSHRC'
+if [ -f "$HOME/.profile" ]; then
+    . "$HOME/.profile"
+fi
+ZSHRC
+
+mkdir -p /home/toolbox/.config/fish
+cat > /home/toolbox/.config/fish/config.fish <<'FISH'
+set -gx UV_INSTALL_DIR /home/toolbox/.local/bin
+set -gx UV_PYTHON_INSTALL_DIR /home/toolbox/.local/share/uv/python
+set -gx UV_CACHE_DIR /home/toolbox/.cache/uv
+
+if not contains -- $UV_INSTALL_DIR $PATH
+    set -gx PATH $UV_INSTALL_DIR $PATH
+end
+
+if test "$VIRTUAL_ENV" != /home/toolbox/venv; and test -f /home/toolbox/venv/bin/activate.fish
+    source /home/toolbox/venv/bin/activate.fish
+else
+    set -gx VIRTUAL_ENV /home/toolbox/venv
+    if not contains -- $VIRTUAL_ENV/bin $PATH
+        set -gx PATH $VIRTUAL_ENV/bin $PATH
+    end
+end
+FISH
+EOF
+
+# Install FastVideo Unified Kernel
+RUN <<EOF
+set -eux
+cd fastvideo-kernel
+git submodule update --init --recursive
+./build.sh
+EOF
+
+# Install agent CLIs when the container starts so the image does not ship stale
+# build-time versions.
+RUN <<EOF
+set -eux
+cat > /usr/local/bin/container-entrypoint <<'ENTRYPOINT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+export NPM_CONFIG_PREFIX=/home/toolbox/.local
+export NPM_CONFIG_CACHE=/home/toolbox/.cache/npm
+export PATH="${NPM_CONFIG_PREFIX}/bin:${PATH}"
+
+mkdir -p "${NPM_CONFIG_PREFIX}" "${NPM_CONFIG_CACHE}"
+npm install --global --no-audit --no-fund @openai/codex @anthropic-ai/claude-code
+
+if [ "$(id -u)" = "0" ]; then
+    chown -R toolbox:toolbox "${NPM_CONFIG_PREFIX}" "${NPM_CONFIG_CACHE}"
+fi
+
+exec "$@"
+ENTRYPOINT
+chmod 0755 /usr/local/bin/container-entrypoint
+EOF
+
+# reset ownership
+RUN chown -R toolbox:toolbox /home/toolbox
+
+EXPOSE 22
+
+ENTRYPOINT ["/usr/local/bin/container-entrypoint"]
+CMD ["/bin/bash"]
+
+# vim: set filetype=dockerfile:
