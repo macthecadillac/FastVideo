@@ -155,6 +155,33 @@ def _build_tensors(args: argparse.Namespace, device: torch.device, dtype: torch.
         dtype=dtype,
         generator=generator,
     )
+    replicated_q = torch.randn(
+        batch,
+        args.replicated_seq_len,
+        heads,
+        head_dim,
+        device=device,
+        dtype=dtype,
+        generator=generator,
+    )
+    replicated_k = torch.randn(
+        batch,
+        args.replicated_seq_len,
+        heads,
+        head_dim,
+        device=device,
+        dtype=dtype,
+        generator=generator,
+    )
+    replicated_v = torch.randn(
+        batch,
+        args.replicated_seq_len,
+        heads,
+        head_dim,
+        device=device,
+        dtype=dtype,
+        generator=generator,
+    )
     return {
         "q": q,
         "k": k,
@@ -162,6 +189,9 @@ def _build_tensors(args: argparse.Namespace, device: torch.device, dtype: torch.
         "qkv": qkv,
         "seq_to_heads": seq_to_heads,
         "replicated": replicated,
+        "replicated_q": replicated_q,
+        "replicated_k": replicated_k,
+        "replicated_v": replicated_v,
     }
 
 
@@ -261,13 +291,43 @@ def _benchmark_distributed_attention(
             )
         return output
 
-    return [{
+    cases = [{
         "name": "distributed_attention_dense",
         "estimated_collectives": 2 if get_sp_world_size() > 1 else 0,
         "input_shape": list(tensors["q"].shape),
         "selected_backend": attention.backend.name if attention.backend is not None else None,
         **_time_cuda_ms(run_attention, warmup=args.warmup, iterations=args.iterations),
     }]
+
+    def run_replicated_attention() -> torch.Tensor:
+        with torch.inference_mode(), set_forward_context(
+            current_timestep=0,
+            attn_metadata=None,
+            forward_batch=forward_batch,
+        ):
+            output, replicated_output = attention(
+                tensors["q"],
+                tensors["k"],
+                tensors["v"],
+                original_seq_len=original_seq_len,
+                replicated_q=tensors["replicated_q"],
+                replicated_k=tensors["replicated_k"],
+                replicated_v=tensors["replicated_v"],
+            )
+        assert replicated_output is not None
+        return output
+
+    if args.include_replicated_attention:
+        cases.append({
+            "name": "distributed_attention_replicated",
+            "estimated_collectives": 3 if get_sp_world_size() > 1 else 0,
+            "input_shape": list(tensors["q"].shape),
+            "replicated_input_shape": list(tensors["replicated_q"].shape),
+            "async_replicated_gather": os.environ.get("FASTVIDEO_ASYNC_REPLICATED_GATHER", "0") != "0",
+            "selected_backend": attention.backend.name if attention.backend is not None else None,
+            **_time_cuda_ms(run_replicated_attention, warmup=args.warmup, iterations=args.iterations),
+        })
+    return cases
 
 
 def _benchmark_metadata(args: argparse.Namespace, device: torch.device) -> list[dict[str, Any]]:
@@ -389,6 +449,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--dtype", default="bf16")
     parser.add_argument("--attention-backend", default="FLASH_ATTN", choices=["FLASH_ATTN", "TORCH_SDPA"])
+    parser.add_argument("--include-replicated-attention", action="store_true")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--metadata-warmup", type=int, default=5)

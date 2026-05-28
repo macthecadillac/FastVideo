@@ -1,12 +1,51 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from https://github.com/vllm-project/vllm/blob/v0.7.3/vllm/distributed/device_communicators/base_device_communicator.py
 
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.distributed as dist
 from torch import Tensor
 from torch.distributed import ProcessGroup, ReduceOp
+
+
+@dataclass
+class AsyncTensorHandle:
+    """Deferred tensor result from an inference-only async collective."""
+
+    work: Any | None
+    output_tensor: Tensor
+    input_tensor: Tensor | None
+    world_size: int
+    dim: int
+    input_size: tuple[int, ...]
+    result: Tensor | None = None
+
+    @classmethod
+    def completed(cls, tensor: Tensor) -> "AsyncTensorHandle":
+        return cls(
+            work=None,
+            output_tensor=tensor,
+            input_tensor=None,
+            world_size=1,
+            dim=0,
+            input_size=tuple(tensor.shape),
+            result=tensor,
+        )
+
+    def wait(self) -> Tensor:
+        if self.result is not None:
+            return self.result
+        if self.work is not None:
+            self.work.wait()
+        output_tensor = self.output_tensor.reshape((self.world_size, ) + self.input_size)
+        output_tensor = output_tensor.movedim(0, self.dim)
+        self.result = output_tensor.reshape(self.input_size[:self.dim] +
+                                            (self.world_size * self.input_size[self.dim], ) +
+                                            self.input_size[self.dim + 1:])
+        self.input_tensor = None
+        return self.result
 
 
 class DistributedAutograd:
@@ -234,6 +273,28 @@ class DeviceCommunicatorBase:
         if dim < 0:
             dim += input_.dim()
         return DistributedAutograd.AllGather.apply(self.device_group, input_, self.world_size, dim)
+
+    def all_gather_async(self, input_: torch.Tensor, dim: int = -1) -> AsyncTensorHandle:
+        """Starts an inference-only all_gather and returns a deferred result handle."""
+        if dim < 0:
+            dim += input_.dim()
+        if torch.is_grad_enabled() and input_.requires_grad:
+            raise RuntimeError("all_gather_async is inference-only; use all_gather for autograd-tracked tensors")
+
+        if not input_.is_contiguous():
+            input_ = input_.contiguous()
+        input_size = tuple(input_.size())
+        output_size = (input_size[0] * self.world_size, ) + input_size[1:]
+        output_tensor = torch.empty(output_size, dtype=input_.dtype, device=input_.device)
+        work = dist.all_gather_into_tensor(output_tensor, input_, group=self.device_group, async_op=True)
+        return AsyncTensorHandle(
+            work=work,
+            output_tensor=output_tensor,
+            input_tensor=input_,
+            world_size=self.world_size,
+            dim=dim,
+            input_size=input_size,
+        )
 
     def slice(self, input_: torch.Tensor, dim: int = -1, *, scale_grad: bool) -> torch.Tensor:
         """Performs rank-local slicing with all-gather backward."""

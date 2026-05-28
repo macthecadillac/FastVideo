@@ -17,11 +17,13 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
+import fastvideo.envs as envs
 from fastvideo.attention.backends.sdpa import SDPAMetadata
 from fastvideo.attention.layer import DistributedAttention, LocalAttention
 from fastvideo.configs.models.dits import LTX2VideoConfig
 from fastvideo.distributed.communication_op import (
     sequence_model_parallel_all_gather,
+    sequence_model_parallel_all_gather_async,
     sequence_model_parallel_all_gather_with_unpad,
     sequence_model_parallel_all_to_all_4D,
     sequence_model_parallel_shard,
@@ -1220,18 +1222,25 @@ class LTXDistributedAttention(DistributedAttention):
 
         # Redistribute back if using sequence parallelism
         replicated_output = None
+        replicated_gather_handle = None
         if replicated_q is not None:
             split_idx = original_seq_len
             replicated_output = output[:, split_idx:]
             output = output[:, :split_idx]
-            replicated_output = sequence_model_parallel_all_gather(
-                replicated_output.contiguous(), dim=2)
+            replicated_output = replicated_output.contiguous()
+            if envs.FASTVIDEO_ASYNC_REPLICATED_GATHER and not torch.is_grad_enabled():
+                replicated_gather_handle = sequence_model_parallel_all_gather_async(replicated_output, dim=2)
+            else:
+                replicated_output = sequence_model_parallel_all_gather(
+                    replicated_output, dim=2)
 
         # Apply backend-specific postprocess_output
         output = self.attn_impl.postprocess_output(output, ctx_attn_metadata)
 
         output = torch.nn.functional.pad(output, (0, 0, 0, 0, 0, pad_seq_len))
 
+        if replicated_gather_handle is not None:
+            replicated_output = replicated_gather_handle.wait()
         output = sequence_model_parallel_all_to_all_4D(output, scatter_dim=1, gather_dim=2)
 
         return output, replicated_output

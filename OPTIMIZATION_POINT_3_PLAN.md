@@ -229,6 +229,55 @@ Acceptance:
 - Measured neutral-or-better latency on the targeted shapes before enabling by
   default.
 
+Stage 2 handoff:
+
+- Status: implemented and remotely validated on Modal L40S:2.
+- Current edits:
+  `fastvideo/distributed/device_communicators/base_device_communicator.py`,
+  `fastvideo/distributed/parallel_state.py`,
+  `fastvideo/distributed/communication_op.py`, `fastvideo/envs.py`,
+  `fastvideo/attention/layer.py`, `fastvideo/models/dits/ltx2.py`,
+  `fastvideo/tests/distributed/test_async_all_gather.py`, and
+  `tests/local_tests/benchmark_attention_sp.py`.
+- Added `FASTVIDEO_ASYNC_REPLICATED_GATHER=1` as an opt-in guard. The default
+  remains synchronous.
+- Added an inference-only async SP all-gather handle. It preserves the same
+  logical output layout as the existing synchronous all-gather and rejects
+  autograd-tracked tensors while grad mode is enabled.
+- Wired the guarded path into generic `DistributedAttention` and the LTX2
+  distributed attention wrapper for replicated-token outputs only.
+- The async gather is started before local output postprocess/padding/main
+  all-to-all work and is waited before returning the replicated output.
+- Added distributed coverage for async-vs-sync all-gather, the grad-enabled
+  rejection path, and replicated-token attention output parity.
+- Extended the attention/SP benchmark with `--include-replicated-attention` so
+  Stage 2 can compare sync and async replicated-token gather timing.
+- Local validation completed:
+  `python -m py_compile fastvideo/distributed/device_communicators/base_device_communicator.py fastvideo/distributed/parallel_state.py fastvideo/distributed/communication_op.py fastvideo/envs.py fastvideo/attention/layer.py fastvideo/models/dits/ltx2.py fastvideo/tests/distributed/test_async_all_gather.py tests/local_tests/benchmark_attention_sp.py`.
+- Pre-commit completed:
+  `pre-commit run --files OPTIMIZATION_POINT_3_PLAN.md fastvideo/distributed/device_communicators/base_device_communicator.py fastvideo/distributed/parallel_state.py fastvideo/distributed/communication_op.py fastvideo/envs.py fastvideo/attention/layer.py fastvideo/models/dits/ltx2.py fastvideo/tests/distributed/test_async_all_gather.py tests/local_tests/benchmark_attention_sp.py`.
+- Modal async correctness completed:
+  `pytest fastvideo/tests/distributed/test_async_all_gather.py -sv` on app
+  `ap-xot47iiqfvKlHfWiXBhAGK`.
+- Existing SP parity completed:
+  `pytest fastvideo/tests/distributed/test_sp_wan.py fastvideo/tests/distributed/test_sp_ltx2.py fastvideo/tests/distributed/test_sp_hunyuanvideo.py -sv`
+  on app `ap-KGkOgmUUbv5MRTXfce9AgU`; all 3 tests passed.
+- Replicated attention sync benchmark completed on app
+  `ap-qoW1gzihCm7Oket3rIQBE7`: replicated attention max rank average
+  5.590 ms.
+- Replicated attention async benchmark completed on app
+  `ap-3c6czFkXjIMyykZWhk2S0T`: replicated attention max rank average
+  5.364 ms with the wait placed before the following all-to-all.
+- A first async attempt waited after the following all-to-all and benchmarked
+  slower at 6.517 ms on app `ap-wVVHILeHM4F4cufxDsKEPg`; the final code waits
+  before starting the next collective.
+- Default remains synchronous. The async path is only enabled by
+  `FASTVIDEO_ASYNC_REPLICATED_GATHER=1`, because this is a narrow benchmark win
+  and should be confirmed on real replicated-token model shapes before becoming
+  a preset/default.
+- Resume point: Stage 2 is ready to commit. Stage 3 should focus on sparse
+  attention fast-path selection and generic BSA stage wiring.
+
 ## Phase 3: Make Sparse-Attention Workloads Hit Fast Paths
 
 VSA and BSA can be faster only when the selected kernel path matches the shape.

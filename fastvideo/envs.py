@@ -209,6 +209,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "FASTVIDEO_ATTENTION_BACKEND":
     lambda: os.getenv("FASTVIDEO_ATTENTION_BACKEND", None),
 
+    # If set, replicated-token attention output gathers can use inference-only
+    # async all-gather and wait after independent local output work.
+    "FASTVIDEO_ASYNC_REPLICATED_GATHER":
+    lambda: bool(os.getenv("FASTVIDEO_ASYNC_REPLICATED_GATHER", "0") != "0"),
+
     # Use dedicated multiprocess context for workers.
     "FASTVIDEO_WORKER_MULTIPROC_METHOD":
     lambda: os.getenv("FASTVIDEO_WORKER_MULTIPROC_METHOD", "spawn"),

@@ -40,7 +40,8 @@ import torch.distributed as dist
 from torch.distributed import Backend, ProcessGroup, ReduceOp
 
 import fastvideo.envs as envs
-from fastvideo.distributed.device_communicators.base_device_communicator import (DeviceCommunicatorBase)
+from fastvideo.distributed.device_communicators.base_device_communicator import (AsyncTensorHandle,
+                                                                                 DeviceCommunicatorBase)
 from fastvideo.distributed.device_communicators.cpu_communicator import (CpuCommunicator)
 from fastvideo.distributed.utils import StatelessProcessGroup
 from fastvideo.logger import init_logger
@@ -318,6 +319,15 @@ class GroupCoordinator:
         assert -input_.dim() <= dim < input_.dim(), (f"Invalid dim ({dim}) for input tensor with shape {input_.size()}")
 
         return self.device_communicator.all_gather(input_, dim)
+
+    def all_gather_async(self, input_: torch.Tensor, dim: int = -1) -> AsyncTensorHandle:
+        world_size = self.world_size
+        # Bypass the function if we are using only 1 GPU.
+        if world_size == 1:
+            return AsyncTensorHandle.completed(input_)
+        assert -input_.dim() <= dim < input_.dim(), (f"Invalid dim ({dim}) for input tensor with shape {input_.size()}")
+
+        return self.device_communicator.all_gather_async(input_, dim)
 
     def shard(self, input_: torch.Tensor, dim: int = -1, *, scale_grad: bool) -> torch.Tensor:
         world_size = self.world_size
