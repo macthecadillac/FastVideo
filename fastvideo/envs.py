@@ -214,6 +214,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "FASTVIDEO_ASYNC_REPLICATED_GATHER":
     lambda: bool(os.getenv("FASTVIDEO_ASYNC_REPLICATED_GATHER", "0") != "0"),
 
+    # Optional VSA tile size override. Empty/default keeps the legacy
+    # (4, 4, 4) path. "auto" selects the 256-token BSHD path only when the
+    # kernel is installed.
+    "FASTVIDEO_VSA_TILE_SIZE":
+    lambda: os.getenv("FASTVIDEO_VSA_TILE_SIZE", ""),
+
     # Use dedicated multiprocess context for workers.
     "FASTVIDEO_WORKER_MULTIPROC_METHOD":
     lambda: os.getenv("FASTVIDEO_WORKER_MULTIPROC_METHOD", "spawn"),

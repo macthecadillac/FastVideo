@@ -319,6 +319,48 @@ Acceptance:
   kernel.
 - VSA fast-path benchmarks show a real improvement before changing defaults.
 
+Stage 3 handoff:
+
+- Status: implemented and remotely validated on Modal L40S:1.
+- Current edits:
+  `fastvideo/attention/backends/video_sparse_attn.py`, `fastvideo/envs.py`,
+  `fastvideo/pipelines/stages/denoising.py`,
+  `fastvideo/tests/attention/test_sparse_attention_wiring.py`, and
+  `tests/local_tests/benchmark_attention_sp.py`.
+- VSA now records `tile_size` in metadata and no longer relies on the
+  module-level `VSA_TILE_SIZE` constant for metadata construction, tiling, or
+  kernel dispatch.
+- The default VSA tile remains `(4, 4, 4)`. `FASTVIDEO_VSA_TILE_SIZE=auto`
+  selects `(4, 8, 8)` only when `video_sparse_attn_bshd` is importable;
+  explicit `VSA_tile_size`/`--vsa-tile-size` overrides are also supported.
+- 256-token VSA tiles still route through the BSHD kernel path; unsupported
+  explicit 256-token requests fall back to `(4, 4, 4)` with a warning.
+- Generic `BSA_ATTN` was removed from the denoising-stage backend allowlist
+  because that generic stage does not build BSA metadata. LongCat's dedicated
+  BSA path is separate and unchanged.
+- The benchmark metadata suite now reports the VSA tile size and supports
+  `--vsa-tile-size`.
+- Added sparse wiring tests for VSA tile selection and for ensuring generic
+  denoising does not select `BSA_ATTN` from the global env override.
+- Local validation completed:
+  `python -m py_compile fastvideo/attention/backends/video_sparse_attn.py fastvideo/envs.py fastvideo/pipelines/stages/denoising.py fastvideo/tests/attention/test_sparse_attention_wiring.py tests/local_tests/benchmark_attention_sp.py`.
+- Pre-commit completed:
+  `pre-commit run --files OPTIMIZATION_POINT_3_PLAN.md fastvideo/attention/backends/video_sparse_attn.py fastvideo/envs.py fastvideo/pipelines/stages/denoising.py fastvideo/tests/attention/test_sparse_attention_wiring.py tests/local_tests/benchmark_attention_sp.py`.
+- Modal sparse wiring completed:
+  `pytest fastvideo/tests/attention/test_sparse_attention_wiring.py -sv` on
+  app `ap-P4azSWjK7pjIiO1CASEDb7`; both tests passed.
+- The Modal L40S image does not include `video_sparse_attn_bshd`, so the
+  `auto` and explicit 256-token test paths correctly fall back to `(4, 4, 4)`.
+- Default metadata benchmark completed on app `ap-KTP2XnvFDTXAQ2954WHyR7`:
+  VSA metadata max rank average 23.900 us with tile size `(4, 4, 4)`.
+- Auto metadata benchmark completed on app `ap-pRlKQdPGHp0LVYQjKtRviv`:
+  VSA metadata max rank average 14.367 us with tile size `(4, 4, 4)` after
+  fallback.
+- Resume point: Stage 3 is ready to commit. A future Blackwell or image with
+  `video_sparse_attn_bshd` installed should rerun the same metadata benchmark
+  with `--vsa-tile-size auto` and then a VSA forward benchmark before making
+  the 256-token tile default.
+
 ## Phase 4: Revisit Graph Breaks Around Attention
 
 The FlashAttention FA2/FA3 default path is already wrapped as a traceable custom

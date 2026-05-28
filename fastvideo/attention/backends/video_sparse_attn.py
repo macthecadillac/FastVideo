@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import torch
 
+import fastvideo.envs as envs
+
 try:
     from fastvideo_kernel import video_sparse_attn
 except ImportError:
@@ -22,10 +24,54 @@ from fastvideo.distributed import get_sp_group
 from fastvideo.logger import init_logger
 
 logger = init_logger(__name__)
-# VSA tile shape. The tile volume picks the kernel path automatically in
-# forward(): (4,4,4)=64 -> existing TK/Triton path (default, unchanged);
+# VSA tile shape. The tile volume picks the kernel path in forward():
+# (4,4,4)=64 -> existing TK/Triton path (default, unchanged);
 # (4,8,8)=256 -> FA4 CuTe block-sparse attention fastpath (Blackwell).
-VSA_TILE_SIZE = (4, 4, 4)
+DEFAULT_VSA_TILE_SIZE = (4, 4, 4)
+BSHD_VSA_TILE_SIZE = (4, 8, 8)
+VSA_TILE_SIZE = DEFAULT_VSA_TILE_SIZE
+_LOGGED_TILE_SIZES: set[tuple[int, int, int]] = set()
+
+
+def _parse_tile_size(value: str) -> tuple[int, int, int]:
+    normalized = value.strip().lower().replace("x", ",")
+    parts = tuple(int(part.strip()) for part in normalized.split(",") if part.strip())
+    if len(parts) != 3 or any(part <= 0 for part in parts):
+        raise ValueError(f"FASTVIDEO_VSA_TILE_SIZE must be 'auto' or three positive ints, got {value!r}")
+    return parts
+
+
+def _select_vsa_tile_size(requested_tile_size: list[int] | tuple[int, int, int] | str | None) -> tuple[int, int, int]:
+    if requested_tile_size is None:
+        requested_tile_size = envs.FASTVIDEO_VSA_TILE_SIZE
+    if requested_tile_size is None or requested_tile_size == "":
+        return DEFAULT_VSA_TILE_SIZE
+    if isinstance(requested_tile_size, list | tuple):
+        tile_size = tuple(int(part) for part in requested_tile_size)
+        if len(tile_size) != 3 or any(part <= 0 for part in tile_size):
+            raise ValueError(f"VSA_tile_size must contain three positive ints, got {requested_tile_size!r}")
+    else:
+        normalized = requested_tile_size.strip().lower()
+        if normalized in {"default", "legacy"}:
+            tile_size = DEFAULT_VSA_TILE_SIZE
+        elif normalized == "auto":
+            tile_size = BSHD_VSA_TILE_SIZE if video_sparse_attn_bshd is not None else DEFAULT_VSA_TILE_SIZE
+        else:
+            tile_size = _parse_tile_size(requested_tile_size)
+
+    if math.prod(tile_size) == 256 and video_sparse_attn_bshd is None:
+        logger.warning(
+            "FASTVIDEO_VSA_TILE_SIZE=%s requested the BSHD fast path, but video_sparse_attn_bshd is not "
+            "installed; falling back to %s.", tile_size, DEFAULT_VSA_TILE_SIZE)
+        return DEFAULT_VSA_TILE_SIZE
+    return tile_size
+
+
+def _log_vsa_tile_size(tile_size: tuple[int, int, int]) -> None:
+    if tile_size in _LOGGED_TILE_SIZES:
+        return
+    _LOGGED_TILE_SIZES.add(tile_size)
+    logger.info("Using VSA tile size %s (%d tokens per block)", tile_size, math.prod(tile_size))
 
 
 @functools.lru_cache(maxsize=10)
@@ -60,6 +106,7 @@ def get_reverse_tile_partition_indices(
 def construct_variable_block_sizes(
     dit_seq_shape: tuple[int, int, int],
     num_tiles: tuple[int, int, int],
+    tile_size: tuple[int, int, int],
     device: torch.device,
 ) -> torch.LongTensor:
     """
@@ -73,7 +120,7 @@ def construct_variable_block_sizes(
     """
     # unpack
     t, h, w = dit_seq_shape
-    ts_t, ts_h, ts_w = VSA_TILE_SIZE
+    ts_t, ts_h, ts_w = tile_size
     n_t, n_h, n_w = num_tiles
 
     def _sizes(dim_len: int, tile: int, n_tiles: int) -> torch.LongTensor:
@@ -140,6 +187,7 @@ class VideoSparseAttentionBackend(AttentionBackend):
 class VideoSparseAttentionMetadata(AttentionMetadata):
     current_timestep: int
     dit_seq_shape: list[int]
+    tile_size: tuple[int, int, int]
     num_tiles: list[int]
     total_seq_length: int
     tile_partition_indices: torch.LongTensor
@@ -175,25 +223,29 @@ class VideoSparseAttentionMetadataBuilder(AttentionMetadataBuilder):
         patch_size: tuple[int, int, int],
         VSA_sparsity: float,
         device: torch.device,
+        VSA_tile_size: list[int] | tuple[int, int, int] | str | None = None,
         **kwargs: dict[str, Any],
     ) -> VideoSparseAttentionMetadata:
         patch_size = patch_size
         dit_seq_shape = (raw_latent_shape[0] // patch_size[0], raw_latent_shape[1] // patch_size[1],
                          raw_latent_shape[2] // patch_size[2])
+        tile_size = _select_vsa_tile_size(VSA_tile_size)
+        _log_vsa_tile_size(tile_size)
 
-        num_tiles = (math.ceil(dit_seq_shape[0] / VSA_TILE_SIZE[0]), math.ceil(dit_seq_shape[1] / VSA_TILE_SIZE[1]),
-                     math.ceil(dit_seq_shape[2] / VSA_TILE_SIZE[2]))
+        num_tiles = (math.ceil(dit_seq_shape[0] / tile_size[0]), math.ceil(dit_seq_shape[1] / tile_size[1]),
+                     math.ceil(dit_seq_shape[2] / tile_size[2]))
         total_seq_length = math.prod(dit_seq_shape)
 
-        tile_partition_indices = get_tile_partition_indices(dit_seq_shape, VSA_TILE_SIZE, device)
-        reverse_tile_partition_indices = get_reverse_tile_partition_indices(dit_seq_shape, VSA_TILE_SIZE, device)
-        variable_block_sizes = construct_variable_block_sizes(dit_seq_shape, num_tiles, device)
-        non_pad_index = get_non_pad_index(variable_block_sizes, math.prod(VSA_TILE_SIZE))
+        tile_partition_indices = get_tile_partition_indices(dit_seq_shape, tile_size, device)
+        reverse_tile_partition_indices = get_reverse_tile_partition_indices(dit_seq_shape, tile_size, device)
+        variable_block_sizes = construct_variable_block_sizes(dit_seq_shape, num_tiles, tile_size, device)
+        non_pad_index = get_non_pad_index(variable_block_sizes, math.prod(tile_size))
         untile_combined_index = non_pad_index[reverse_tile_partition_indices]
 
         return VideoSparseAttentionMetadata(
             current_timestep=current_timestep,
             dit_seq_shape=dit_seq_shape,  # type: ignore
+            tile_size=tile_size,
             VSA_sparsity=VSA_sparsity,  # type: ignore
             num_tiles=num_tiles,  # type: ignore
             total_seq_length=total_seq_length,  # type: ignore
@@ -232,9 +284,10 @@ class VideoSparseAttentionImpl(AttentionImpl):
         contract holds; future callers must preserve it.
         """
         num_tiles = attn_metadata.num_tiles
-        t_padded_size = num_tiles[0] * VSA_TILE_SIZE[0]
-        h_padded_size = num_tiles[1] * VSA_TILE_SIZE[1]
-        w_padded_size = num_tiles[2] * VSA_TILE_SIZE[2]
+        tile_size = attn_metadata.tile_size
+        t_padded_size = num_tiles[0] * tile_size[0]
+        h_padded_size = num_tiles[1] * tile_size[1]
+        w_padded_size = num_tiles[2] * tile_size[2]
         target_shape = (x.shape[0], t_padded_size * h_padded_size * w_padded_size, x.shape[-2], x.shape[-1])
 
         # Reuse the per-step buffer stashed on metadata (lazily allocated
@@ -283,7 +336,8 @@ class VideoSparseAttentionImpl(AttentionImpl):
         attn_metadata: VideoSparseAttentionMetadata,
     ) -> torch.Tensor:
         VSA_sparsity = attn_metadata.VSA_sparsity
-        block_elements = math.prod(VSA_TILE_SIZE)
+        tile_size = attn_metadata.tile_size
+        block_elements = math.prod(tile_size)
         cur_topk = math.ceil((1 - VSA_sparsity) * (attn_metadata.total_seq_length / block_elements))
 
         # 256-element tiles auto-route to the FA4 CuTe BSHD fastpath, which
@@ -295,7 +349,7 @@ class VideoSparseAttentionImpl(AttentionImpl):
                                           attn_metadata.variable_block_sizes,
                                           attn_metadata.variable_block_sizes,
                                           cur_topk,
-                                          block_size=VSA_TILE_SIZE,
+                                          block_size=tile_size,
                                           compress_attn_weight=gate_compress)
 
         if video_sparse_attn is None:
@@ -311,5 +365,5 @@ class VideoSparseAttentionImpl(AttentionImpl):
                                  attn_metadata.variable_block_sizes,
                                  attn_metadata.variable_block_sizes,
                                  cur_topk,
-                                 block_size=VSA_TILE_SIZE,
+                                 block_size=tile_size,
                                  compress_attn_weight=gate_compress).transpose(1, 2)

@@ -341,18 +341,26 @@ def _benchmark_metadata(args: argparse.Namespace, device: torch.device) -> list[
     cases: list[dict[str, Any]] = []
 
     vsa_builder = VideoSparseAttentionMetadataBuilder()
+    vsa_tile_size = args.vsa_tile_size or None
+
+    def build_vsa_metadata() -> Any:
+        return vsa_builder.build(
+            current_timestep=0,
+            raw_latent_shape=raw_latent_shape,
+            patch_size=patch_size,
+            VSA_sparsity=args.vsa_sparsity,
+            VSA_tile_size=vsa_tile_size,
+            device=device,
+        )
+
+    vsa_metadata = build_vsa_metadata()
     cases.append({
         "name": "metadata_vsa",
         "raw_latent_shape": list(raw_latent_shape),
         "patch_size": list(patch_size),
+        "tile_size": list(vsa_metadata.tile_size),
         **_time_cpu_us(
-            lambda: vsa_builder.build(
-                current_timestep=0,
-                raw_latent_shape=raw_latent_shape,
-                patch_size=patch_size,
-                VSA_sparsity=args.vsa_sparsity,
-                device=device,
-            ),
+            build_vsa_metadata,
             warmup=args.metadata_warmup,
             iterations=args.metadata_iterations,
         ),
@@ -434,6 +442,10 @@ def _summarize_rank_cases(gathered: list[dict[str, Any]]) -> list[dict[str, Any]
         if all(case.get("skipped") for case in cases):
             item["skipped"] = True
             item["reason"] = cases[0].get("reason")
+        for metadata_key in ("tile_size", "selected_backend", "async_replicated_gather"):
+            values = [case.get(metadata_key) for case in cases if metadata_key in case]
+            if len(values) == len(cases) and all(value == values[0] for value in values):
+                item[metadata_key] = values[0]
         summary.append(item)
     return summary
 
@@ -457,6 +469,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--metadata-raw-latent-shape", default="16,64,64")
     parser.add_argument("--metadata-patch-size", default="1,2,2")
     parser.add_argument("--vsa-sparsity", type=float, default=0.8)
+    parser.add_argument("--vsa-tile-size", default="")
     parser.add_argument("--seed", type=int, default=2026)
     return parser.parse_args()
 
