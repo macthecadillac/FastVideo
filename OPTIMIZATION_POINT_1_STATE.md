@@ -5,7 +5,7 @@ This file tracks work for `OPTIMIZATION.md` point 1 on branch
 
 ## Handoff State
 
-Last updated: 2026-05-29 after commit and push.
+Last updated: 2026-05-29 after Modal L40S before/after parity validation.
 
 Branch state:
 
@@ -20,10 +20,15 @@ Branch state:
 Current milestone:
 
 - Implemented, validated, committed, and pushed the point-1 gating change.
+- Added and ran a real-pipeline parity test comparing default gated tensor
+  validation against full tensor validation.
+- Parity result: exact match, with `max_abs=0.0`, `mean_abs=0.0`, and
+  `num_different=0`.
 
 Next resume point:
 
 - Point 1 is complete.
+- Commit and push the added parity reproducer plus this state-file update.
 - Resume the broader optimization sequence by creating the point-2 branch from `main`.
 
 ## Scope
@@ -191,3 +196,56 @@ Final handoff:
 - The complete test/benchmark record is in Milestone 2 above.
 - Next point should start from a fresh branch off `main`, not from this point-1 branch, unless the user explicitly
   asks to stack the optimization branches.
+
+### Milestone 4: Real-Pipeline Parity Test
+
+- Status: complete.
+- Added `tests/local_tests/parity_tensor_validation_gating.py`.
+- Test purpose:
+  - Run the same Wan 2.1 1.3B latent-output request twice with a fixed seed.
+  - Reference mode: `enable_full_tensor_validation=False`, matching the optimized production default.
+  - Candidate/debug mode: `enable_full_tensor_validation=True`, matching the old full tensor-value validation path.
+  - Compare returned latent samples after both requests.
+- Local checks for the new parity reproducer:
+  - `python -m py_compile tests/local_tests/parity_tensor_validation_gating.py` passed.
+  - `git diff --check -- tests/local_tests/parity_tensor_validation_gating.py` passed.
+  - `pre-commit run --files tests/local_tests/parity_tensor_validation_gating.py` passed the only applicable hook
+    (`Check for spaces in all filenames`); project lint hooks intentionally skipped `tests/local_tests`.
+- Modal L40S command:
+  `python tests/local_tests/parity_tensor_validation_gating.py --num-gpus 1 --sp-size 1 --tp-size 1 --height 256 --width 256 --num-frames 17 --num-inference-steps 4`
+- Modal run URL:
+  `https://modal.com/apps/hao-ai-lab/main/ap-3T9vt1ObLshvA2tG9ZvJDI`
+- Branch commit under test:
+  `01ae214f0eb0dd2c03b38fa70f2cb67f54b57d16`.
+- Model/profile:
+  - Model: `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`.
+  - Shape: latent output `[1, 16, 5, 32, 32]`.
+  - Resolution: `256x256`.
+  - Frames: `17`.
+  - Inference steps: `4`.
+  - Seed: `1024`.
+  - Guidance scale: `1.0`.
+  - Embedded CFG scale: `6.0`.
+- Result:
+  - `exact_equal`: `true`.
+  - `allclose_atol_0_rtol_0`: `true`.
+  - `allclose_atol_1e_6_rtol_1e_6`: `true`.
+  - `allclose_atol_1e_5_rtol_1e_5`: `true`.
+  - `max_abs`: `0.0`.
+  - `mean_abs`: `0.0`.
+  - `num_different`: `0`.
+- Interpretation:
+  - Point 1 is a control-flow and diagnostics gating change only.
+  - For the tested real Wan pipeline request, enabling or disabling the expensive tensor-value checks does not alter
+    the generated latent at all.
+  - This satisfies near bit-by-bit parity; it is stronger than tolerance-based parity because the returned tensors are
+    exactly equal.
+
+Handoff checkpoint:
+
+- Branch: `opt-gate-validation-checks`.
+- Previous implementation commit remains `a5fca368` (`[perf]: gate expensive tensor validation`).
+- New uncommitted parity-scope files after this milestone:
+  - `OPTIMIZATION_POINT_1_STATE.md`
+  - `tests/local_tests/parity_tensor_validation_gating.py`
+- Commit and push only those two files for the parity documentation/reproducer update.
