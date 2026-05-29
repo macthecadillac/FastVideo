@@ -6,12 +6,13 @@ every transformer block, and every self-attention layer.
 
 ## Handoff State
 
-Last updated: 2026-05-28 after adding the stage-by-stage performance gains
-summary.
+Last updated: 2026-05-29 after clarifying numerical parity coverage.
 
 Branch state:
 
-- Current branch: `attn-hot-path`.
+- Current branch: `attn-sp-comm-vsa-compile-optimizations`.
+  The `attn-hot-path` branch name was later reused from `main`; the completed
+  point-3 optimization work lives on this more descriptive branch.
 - Pushed optimization commits:
   - `035eb7e2` `[perf]: add attention SP benchmark harness`
   - `12a70f4a` `[perf]: reduce SP all-to-all layout traffic`
@@ -68,12 +69,57 @@ Validation summary:
 - Modal benchmark runs are documented in the per-stage handoff notes below,
   including app IDs and headline timings.
 
+Numerical parity status:
+
+- Near bit-by-bit branch-vs-main parity was not established for point 3. The
+  completed validation did not run a full end-to-end generated latent or video
+  comparison between `main` and this branch.
+- The correct claim for this branch is targeted component and tiny-model parity
+  within tight floating-point tolerances:
+  - Stage 1 all-to-all rewrites passed deterministic layout tests, round-trip
+    checks, and backward checks with `torch.testing.assert_close`. Existing
+    Wan, LTX2, and HunyuanVideo SP gradient parity tests also passed on Modal;
+    those tests compare single-rank and SP gradients with
+    `rtol=1e-4, atol=1e-5`.
+  - Stage 2 async replicated gather passed sync-vs-async all-gather checks and
+    replicated-token attention output parity with `rtol=1e-5, atol=1e-5`.
+    This path remains opt-in via `FASTVIDEO_ASYNC_REPLICATED_GATHER=1`, so the
+    default inference/training behavior is still synchronous.
+  - Stage 3 sparse-attention wiring validated tile-size selection and fallback
+    behavior, but did not validate numerical parity for the fast
+    `video_sparse_attn_bshd` path because that kernel was not installed in the
+    Modal L40S image. No production speedup or output-parity claim is made for
+    the unavailable fast sparse kernel.
+  - Stage 4 dense SP=1 direct path matched `LocalAttention` with
+    `rtol=1e-5, atol=1e-5`, and
+    `torch.compile(..., backend="eager", fullgraph=True)` matched eager output
+    with the same tolerance. Existing Wan, LTX2, and HunyuanVideo SP gradient
+    parity tests passed again after this change.
+- Bitwise equality is not a realistic or claimed target for these attention and
+  distributed changes. Kernel call shape, operation ordering, distributed
+  collectives, and compile boundaries can all change floating-point rounding
+  while preserving numerically equivalent results. The intended gate is tight
+  `allclose` parity plus model-level latent or SSIM checks for paths that can
+  change generated outputs.
+- Recommended follow-up before making broader claims or enabling optional sparse
+  paths by default:
+  - Run branch-vs-main Wan 1.3B latent-output parity on Modal with fixed seed,
+    prompt, dimensions, and scheduler settings. Record `max_abs`, `mean_abs`,
+    and `torch.allclose` results.
+  - Run the same comparison for SP=1 and SP=2 attention profiles under
+    `FLASH_ATTN`; keep `TORCH_SDPA` coverage for deterministic compile tests.
+  - If `video_sparse_attn_bshd` is installed and enabled, run sparse-kernel
+    latent parity plus decoded-frame SSIM/visual review before changing any
+    default sparse-attention behavior.
+
 Next resume point:
 
 - Continue Phase 4 with model-level compile coverage: add a tiny Wan-like
   eager-vs-compiled path that exercises the repository's `_compile_conditions`
   / `enable_torch_compile` plumbing, now that the attention wrapper itself has
   a fullgraph-covered SP=1 dense path.
+- Add an explicit branch-vs-main latent parity harness if review requires a
+  full before/after output-equivalence claim.
 - Keep distributed collectives and sparse-layout hooks out of the compiled
   path until there is a dedicated test proving Dynamo behavior for those
   branches.
