@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     FASTVIDEO_LOGGING_CONFIG_PATH: str | None = None
     FASTVIDEO_TRACE_FUNCTION: int = 0
     FASTVIDEO_ATTENTION_BACKEND: str | None = None
+    FASTVIDEO_FULL_TENSOR_VALIDATION: bool = False
     FASTVIDEO_WORKER_MULTIPROC_METHOD: str = "spawn"
     FASTVIDEO_TARGET_DEVICE: str = "cuda"
     MAX_JOBS: str | None = None
@@ -208,6 +209,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # - "SAGE_ATTN_THREE": use Sage Attention 3
     "FASTVIDEO_ATTENTION_BACKEND":
     lambda: os.getenv("FASTVIDEO_ATTENTION_BACKEND", None),
+
+    # If set, stage validators and diagnostic NaN checks scan tensor values.
+    # Default production behavior keeps cheap structural checks only.
+    "FASTVIDEO_FULL_TENSOR_VALIDATION":
+    lambda: bool(os.getenv("FASTVIDEO_FULL_TENSOR_VALIDATION", "0") != "0"),
 
     # Use dedicated multiprocess context for workers.
     "FASTVIDEO_WORKER_MULTIPROC_METHOD":

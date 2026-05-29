@@ -16,7 +16,7 @@ import fastvideo.envs as envs
 from fastvideo.fastvideo_args import FastVideoArgs
 from fastvideo.logger import init_logger
 from fastvideo.pipelines.pipeline_batch_info import ForwardBatch
-from fastvideo.pipelines.stages.validators import VerificationResult
+from fastvideo.pipelines.stages.validators import (VerificationResult, tensor_validation_context)
 
 logger = init_logger(__name__)
 
@@ -132,11 +132,13 @@ class PipelineStage(ABC):
 
         # Check if verification is enabled (simple approach for prototype)
         enable_verification = getattr(fastvideo_args, 'enable_stage_verification', False)
+        enable_full_tensor_validation = getattr(fastvideo_args, 'enable_full_tensor_validation', False)
 
         if enable_verification:
             # Pre-execution input verification
             try:
-                input_result = self.verify_input(batch, fastvideo_args)
+                with tensor_validation_context(enable_full_tensor_validation):
+                    input_result = self.verify_input(batch, fastvideo_args)
                 self._run_verification(input_result, stage_name, "input")
             except Exception as e:
                 logger.error("Input verification failed for %s: %s", stage_name, str(e))
@@ -168,7 +170,8 @@ class PipelineStage(ABC):
         if enable_verification:
             # Post-execution output verification
             try:
-                output_result = self.verify_output(result, fastvideo_args)
+                with tensor_validation_context(enable_full_tensor_validation):
+                    output_result = self.verify_output(result, fastvideo_args)
                 self._run_verification(output_result, stage_name, "output")
             except Exception as e:
                 logger.error("Output verification failed for %s: %s", stage_name, str(e))

@@ -23,7 +23,7 @@ from fastvideo.models.loader.component_loader import TransformerLoader, Upsample
 from fastvideo.pipelines.pipeline_batch_info import ForwardBatch
 from fastvideo.pipelines.stages.base import PipelineStage
 from fastvideo.pipelines.stages.validators import StageValidators as V
-from fastvideo.pipelines.stages.validators import VerificationResult
+from fastvideo.pipelines.stages.validators import VerificationResult, assert_tensor_has_no_nan
 from fastvideo.platforms import AttentionBackendEnum
 
 try:
@@ -112,6 +112,7 @@ class SRDenoisingStage(PipelineStage):
         # target_dtype = PRECISION_TO_TYPE[fastvideo_args.precision]
         target_dtype = torch.bfloat16
         autocast_enabled = (target_dtype != torch.float32) and not fastvideo_args.disable_autocast
+        check_tensor_values = getattr(fastvideo_args, "enable_full_tensor_validation", False)
 
         self.scheduler.set_shift(fastvideo_args.pipeline_config.flow_shift_sr)
         sigmas = np.linspace(1.0, 0.0, batch.num_inference_steps_sr + 1)[:-1]
@@ -132,7 +133,7 @@ class SRDenoisingStage(PipelineStage):
 
         image_embeds = batch.image_embeds
         if len(image_embeds) > 0:
-            assert not torch.isnan(image_embeds[0]).any(), "image_embeds contains nan"
+            assert_tensor_has_no_nan(image_embeds[0], "image_embeds", enabled=check_tensor_values)
             image_embeds = [image_embed.to(target_dtype) for image_embed in image_embeds]
 
         image_kwargs = self.prepare_extra_func_kwargs(
@@ -144,7 +145,7 @@ class SRDenoisingStage(PipelineStage):
 
         # Get latents and embeddings
         prompt_embeds = batch.prompt_embeds
-        assert not torch.isnan(prompt_embeds[0]).any(), "prompt_embeds contains nan"
+        assert_tensor_has_no_nan(prompt_embeds[0], "prompt_embeds", enabled=check_tensor_values)
 
         latents = batch.latents
         lq_latents = batch.lq_latents
@@ -183,7 +184,7 @@ class SRDenoisingStage(PipelineStage):
 
                 latent_model_input = torch.concat([latents, condition], dim=1)
 
-                assert not torch.isnan(latent_model_input).any(), "latent_model_input contains nan"
+                assert_tensor_has_no_nan(latent_model_input, "latent_model_input", enabled=check_tensor_values)
                 t_expand = t.repeat(latent_model_input.shape[0])
 
                 if i == len(timesteps) - 1:

@@ -16,6 +16,7 @@ from fastvideo.configs.models.encoders import (
 )
 from fastvideo.configs.models.vaes import OobleckVAEConfig, WanVAEConfig
 from fastvideo.configs.pipelines.base import PipelineConfig
+from fastvideo.pipelines.stages.validators import assert_tensor_has_no_nan
 
 
 def t5gemma_postprocess_text(outputs: BaseEncoderOutput) -> torch.Tensor:
@@ -27,7 +28,7 @@ def t5gemma_postprocess_text(outputs: BaseEncoderOutput) -> torch.Tensor:
     for pad/trim so that the original context length can be preserved.
     """
     hidden = outputs.last_hidden_state
-    assert torch.isnan(hidden).sum() == 0
+    assert_tensor_has_no_nan(hidden, "t5gemma hidden")
     # Keep the shape the tokenizer emitted; the pipeline stage handles
     # pad-or-trim to t5_gemma_target_length=640.
     return hidden

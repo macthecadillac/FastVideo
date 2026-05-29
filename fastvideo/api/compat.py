@@ -157,7 +157,12 @@ def legacy_from_pretrained_to_config(
             preset_refine["num_inference_steps"] = value
         elif key == "ltx2_refine_guidance_scale":
             preset_refine["guidance_scale"] = value
-        elif key in {"enable_stage_verification", "use_fsdp_inference", "disable_autocast"}:
+        elif key in {
+                "enable_stage_verification",
+                "enable_full_tensor_validation",
+                "use_fsdp_inference",
+                "disable_autocast",
+        }:
             engine[key] = value
         elif key == "override_text_encoder_quant":
             quantization["text_encoder_quant"] = value
@@ -242,6 +247,7 @@ def generator_config_to_fastvideo_args(config: GeneratorConfig | Mapping[str, An
         "enable_torch_compile": engine.compile.enabled,
         "torch_compile_kwargs": _compile_config_to_torch_kwargs(engine.compile),
         "enable_stage_verification": engine.enable_stage_verification,
+        "enable_full_tensor_validation": engine.enable_full_tensor_validation,
         "use_fsdp_inference": engine.use_fsdp_inference,
         "disable_autocast": engine.disable_autocast,
     }

@@ -16,7 +16,7 @@ from fastvideo.models.loader.component_loader import TransformerLoader
 from fastvideo.pipelines.pipeline_batch_info import ForwardBatch
 from fastvideo.pipelines.stages.denoising import DenoisingStage
 from fastvideo.pipelines.stages.validators import StageValidators as V
-from fastvideo.pipelines.stages.validators import VerificationResult
+from fastvideo.pipelines.stages.validators import VerificationResult, assert_tensor_has_no_nan
 from fastvideo.utils import dict_to_3d_list
 from fastvideo.models.dits.hyworld.retrieval_context import (generate_points_in_sphere, select_aligned_memory_frames)
 from fastvideo.models.dits.hyworld.pose import pose_to_input, compute_latent_num
@@ -119,6 +119,7 @@ class HYWorldDenoisingStage(DenoisingStage):
         # Setup precision and autocast settings
         target_dtype = torch.bfloat16
         autocast_enabled = (target_dtype != torch.float32) and not fastvideo_args.disable_autocast
+        check_tensor_values = getattr(fastvideo_args, "enable_full_tensor_validation", False)
 
         # Get timesteps and calculate warmup steps
         timesteps = batch.timesteps
@@ -130,7 +131,7 @@ class HYWorldDenoisingStage(DenoisingStage):
         # Prepare image latents and embeddings for I2V generation
         image_embeds = batch.image_embeds
         if len(image_embeds) > 0:
-            assert not torch.isnan(image_embeds[0]).any(), "image_embeds contains nan"
+            assert_tensor_has_no_nan(image_embeds[0], "image_embeds", enabled=check_tensor_values)
             image_embeds = [image_embed.to(target_dtype) for image_embed in image_embeds]
 
         image_kwargs = self.prepare_extra_func_kwargs(
@@ -144,11 +145,11 @@ class HYWorldDenoisingStage(DenoisingStage):
         # Get latents and embeddings
         latents = batch.latents
         prompt_embeds = batch.prompt_embeds
-        assert not torch.isnan(prompt_embeds[0]).any(), "prompt_embeds contains nan"
+        assert_tensor_has_no_nan(prompt_embeds[0], "prompt_embeds", enabled=check_tensor_values)
         if batch.do_classifier_free_guidance:
             neg_prompt_embeds = batch.negative_prompt_embeds
             assert neg_prompt_embeds is not None
-            assert not torch.isnan(neg_prompt_embeds[0]).any(), "neg_prompt_embeds contains nan"
+            assert_tensor_has_no_nan(neg_prompt_embeds[0], "neg_prompt_embeds", enabled=check_tensor_values)
 
         latent_model_input = latents.to(target_dtype)
         assert latent_model_input.shape[0] == 1, "only support batch size 1"

@@ -8,7 +8,7 @@ from fastvideo.models.utils import pred_noise_to_pred_video, pred_noise_to_x_bou
 from fastvideo.pipelines.pipeline_batch_info import ForwardBatch
 from fastvideo.pipelines.stages.denoising import DenoisingStage
 from fastvideo.pipelines.stages.validators import StageValidators as V
-from fastvideo.pipelines.stages.validators import VerificationResult
+from fastvideo.pipelines.stages.validators import VerificationResult, assert_tensor_has_no_nan
 
 try:
     from fastvideo.attention.backends.video_sparse_attn import (VideoSparseAttentionBackend)
@@ -67,6 +67,7 @@ class CausalDMDDenosingStage(DenoisingStage):
     ) -> ForwardBatch:
         target_dtype = torch.bfloat16
         autocast_enabled = (target_dtype != torch.float32) and not fastvideo_args.disable_autocast
+        check_tensor_values = getattr(fastvideo_args, "enable_full_tensor_validation", False)
 
         latent_seq_length = batch.latents.shape[-1] * batch.latents.shape[-2]
         patch_ratio = self.transformer.config.arch_config.patch_size[
@@ -105,7 +106,7 @@ class CausalDMDDenosingStage(DenoisingStage):
         latents = batch.latents  # [B, C, T, H, W]
         b, c, t, h, w = latents.shape
         prompt_embeds = batch.prompt_embeds
-        assert torch.isnan(prompt_embeds[0]).sum() == 0
+        assert_tensor_has_no_nan(prompt_embeds[0], "prompt_embeds", enabled=check_tensor_values)
 
         # Initialize or reset caches
         kv_cache1 = self._initialize_kv_cache(batch_size=latents.shape[0], dtype=target_dtype, device=latents.device)
@@ -441,6 +442,7 @@ class CausalDenoisingStage(CausalDMDDenosingStage):
     ) -> ForwardBatch:
         target_dtype = torch.bfloat16
         autocast_enabled = (target_dtype != torch.float32 and not fastvideo_args.disable_autocast)
+        check_tensor_values = getattr(fastvideo_args, "enable_full_tensor_validation", False)
 
         latent_seq_length = (batch.latents.shape[-1] * batch.latents.shape[-2])
         patch_ratio = (self.transformer.config.arch_config.patch_size[-1] *
@@ -458,7 +460,7 @@ class CausalDenoisingStage(CausalDMDDenosingStage):
         latents = batch.latents  # [B, C, T, H, W]
         b, c, t, h, w = latents.shape
         prompt_embeds = batch.prompt_embeds
-        assert torch.isnan(prompt_embeds[0]).sum() == 0
+        assert_tensor_has_no_nan(prompt_embeds[0], "prompt_embeds", enabled=check_tensor_values)
 
         num_inference_steps = batch.num_inference_steps
 

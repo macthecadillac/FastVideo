@@ -14,7 +14,7 @@ from fastvideo.models.utils import pred_noise_to_pred_video, pred_noise_to_x_bou
 from fastvideo.pipelines.pipeline_batch_info import ForwardBatch
 from fastvideo.pipelines.stages.denoising import DenoisingStage
 from fastvideo.pipelines.stages.validators import StageValidators as V
-from fastvideo.pipelines.stages.validators import VerificationResult
+from fastvideo.pipelines.stages.validators import VerificationResult, assert_tensor_has_no_nan
 
 try:
     from fastvideo.attention.backends.video_sparse_attn import (VideoSparseAttentionBackend)
@@ -108,6 +108,7 @@ class MatrixGame2CausalDenoisingStage(DenoisingStage):
     ) -> ForwardBatch:
         target_dtype = torch.bfloat16
         autocast_enabled = (target_dtype != torch.float32) and not fastvideo_args.disable_autocast
+        check_tensor_values = getattr(fastvideo_args, "enable_full_tensor_validation", False)
 
         latent_seq_length = batch.latents.shape[-1] * batch.latents.shape[-2]
         patch_size = self.transformer.patch_size
@@ -130,7 +131,7 @@ class MatrixGame2CausalDenoisingStage(DenoisingStage):
 
         image_embeds = batch.image_embeds
         if len(image_embeds) > 0:
-            assert torch.isnan(image_embeds[0]).sum() == 0
+            assert_tensor_has_no_nan(image_embeds[0], "image_embeds", enabled=check_tensor_values)
             image_embeds = [image_embed.to(target_dtype) for image_embed in image_embeds]
 
         # directly set the kwarg.
@@ -141,7 +142,7 @@ class MatrixGame2CausalDenoisingStage(DenoisingStage):
         latents = batch.latents
         b, c, t, h, w = latents.shape
         prompt_embeds = batch.prompt_embeds
-        assert torch.isnan(prompt_embeds[0]).sum() == 0
+        assert_tensor_has_no_nan(prompt_embeds[0], "prompt_embeds", enabled=check_tensor_values)
 
         kv_cache1 = self._initialize_kv_cache(batch_size=latents.shape[0], dtype=target_dtype, device=latents.device)
         kv_cache2 = None
@@ -544,6 +545,7 @@ class MatrixGame2CausalDenoisingStage(DenoisingStage):
     def streaming_reset(self, batch: ForwardBatch, fastvideo_args: FastVideoArgs) -> ForwardBatch:
         target_dtype = torch.bfloat16
         autocast_enabled = (target_dtype != torch.float32) and not fastvideo_args.disable_autocast
+        check_tensor_values = getattr(fastvideo_args, "enable_full_tensor_validation", False)
 
         latent_seq_length = batch.latents.shape[-1] * batch.latents.shape[-2]
         patch_size = self.transformer.patch_size
@@ -566,7 +568,7 @@ class MatrixGame2CausalDenoisingStage(DenoisingStage):
 
         image_embeds = batch.image_embeds
         if len(image_embeds) > 0:
-            assert torch.isnan(image_embeds[0]).sum() == 0
+            assert_tensor_has_no_nan(image_embeds[0], "image_embeds", enabled=check_tensor_values)
             image_embeds = [image_embed.to(target_dtype) for image_embed in image_embeds]
 
         # directly set the kwarg.
@@ -577,7 +579,7 @@ class MatrixGame2CausalDenoisingStage(DenoisingStage):
         latents = batch.latents
         b, c, t, h, w = latents.shape
         prompt_embeds = batch.prompt_embeds
-        assert torch.isnan(prompt_embeds[0]).sum() == 0
+        assert_tensor_has_no_nan(prompt_embeds[0], "prompt_embeds", enabled=check_tensor_values)
 
         # Initialize caches
         kv_cache1 = self._initialize_kv_cache(batch_size=latents.shape[0], dtype=target_dtype, device=latents.device)
