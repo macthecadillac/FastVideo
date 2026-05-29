@@ -5,7 +5,7 @@ Denoising stage for diffusion pipelines.
 
 import inspect
 import weakref
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import torch
@@ -42,6 +42,10 @@ except ImportError:
 logger = init_logger(__name__)
 
 
+class _BatchedCFGUnsupportedError(Exception):
+    """Raised when inputs cannot be safely combined for batched CFG."""
+
+
 class DenoisingStage(PipelineStage):
     """
     Stage for running the denoising loop in diffusion pipelines.
@@ -65,6 +69,98 @@ class DenoisingStage(PipelineStage):
                                           AttentionBackendEnum.VMOBA_ATTN, AttentionBackendEnum.FLASH_ATTN,
                                           AttentionBackendEnum.TORCH_SDPA, AttentionBackendEnum.SAGE_ATTN_THREE)  # hack
         )
+
+    @classmethod
+    def _repeat_cfg_value(cls, value: Any) -> Any:
+        """Duplicate batch-shaped tensors for batched CFG while leaving static metadata alone."""
+        if isinstance(value, torch.Tensor):
+            return torch.cat([value, value], dim=0)
+        if isinstance(value, list):
+            repeated = []
+            changed = False
+            for item in value:
+                repeated_item = cls._repeat_cfg_value(item)
+                repeated.append(repeated_item)
+                changed = changed or repeated_item is not item
+            return repeated if changed else value
+        if isinstance(value, tuple):
+            repeated_tuple = tuple(cls._repeat_cfg_value(item) for item in value)
+            changed = any(repeated_item is not item for repeated_item, item in zip(repeated_tuple, value, strict=True))
+            return repeated_tuple if changed else value
+        return value
+
+    @classmethod
+    def _concat_cfg_value(cls, uncond_value: Any, cond_value: Any, name: str) -> Any:
+        """Concatenate unconditional then conditional values along batch dimension."""
+        if uncond_value is None and cond_value is None:
+            return None
+        if isinstance(uncond_value, torch.Tensor) and isinstance(cond_value, torch.Tensor):
+            return torch.cat([uncond_value, cond_value], dim=0)
+        if isinstance(uncond_value, list) and isinstance(cond_value, list):
+            if len(uncond_value) != len(cond_value):
+                raise _BatchedCFGUnsupportedError(
+                    f"Cannot batch CFG for {name}: list lengths differ ({len(uncond_value)} != {len(cond_value)})")
+            return [cls._concat_cfg_value(u, c, name) for u, c in zip(uncond_value, cond_value, strict=True)]
+        if isinstance(uncond_value, tuple) and isinstance(cond_value, tuple):
+            if len(uncond_value) != len(cond_value):
+                raise _BatchedCFGUnsupportedError(
+                    f"Cannot batch CFG for {name}: tuple lengths differ ({len(uncond_value)} != {len(cond_value)})")
+            return tuple(cls._concat_cfg_value(u, c, name) for u, c in zip(uncond_value, cond_value, strict=True))
+        raise _BatchedCFGUnsupportedError(f"Cannot batch CFG for {name}: unsupported value types "
+                                          f"{type(uncond_value).__name__} and {type(cond_value).__name__}")
+
+    @classmethod
+    def _repeat_cfg_kwargs(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
+        return {key: cls._repeat_cfg_value(value) for key, value in kwargs.items()}
+
+    @classmethod
+    def _merge_cfg_condition_kwargs(cls, cond_kwargs: dict[str, Any], uncond_kwargs: dict[str, Any]) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        for key in cond_kwargs.keys() | uncond_kwargs.keys():
+            if key in cond_kwargs and key in uncond_kwargs:
+                merged[key] = cls._concat_cfg_value(uncond_kwargs[key], cond_kwargs[key], key)
+            elif key in cond_kwargs:
+                merged[key] = cls._repeat_cfg_value(cond_kwargs[key])
+            else:
+                merged[key] = cls._repeat_cfg_value(uncond_kwargs[key])
+        return merged
+
+    @staticmethod
+    def _is_cuda_oom(error: RuntimeError) -> bool:
+        cuda_oom_error = getattr(torch.cuda, "OutOfMemoryError", None)
+        return ((cuda_oom_error is not None and isinstance(error, cuda_oom_error))
+                or "CUDA out of memory" in str(error))
+
+    def _run_batched_cfg_forward(
+        self,
+        run_transformer_branch: Callable[..., torch.Tensor],
+        latent_model_input: torch.Tensor,
+        prompt_embeds: Any,
+        neg_prompt_embeds: Any,
+        t_expand: torch.Tensor,
+        guidance_expand: torch.Tensor | None,
+        pos_cond_kwargs: dict[str, Any],
+        neg_cond_kwargs: dict[str, Any],
+        image_kwargs: dict[str, Any],
+        action_kwargs: dict[str, Any],
+        camera_kwargs: dict[str, Any],
+        timesteps_r_kwarg: dict[str, Any],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        batched_prompt_embeds = self._concat_cfg_value(neg_prompt_embeds, prompt_embeds, "prompt_embeds")
+        batched_cond_kwargs = self._merge_cfg_condition_kwargs(pos_cond_kwargs, neg_cond_kwargs)
+        batched_noise_pred = run_transformer_branch(
+            self._repeat_cfg_value(latent_model_input),
+            batched_prompt_embeds,
+            self._repeat_cfg_value(t_expand),
+            self._repeat_cfg_value(guidance_expand),
+            batched_cond_kwargs,
+            self._repeat_cfg_kwargs(image_kwargs),
+            self._repeat_cfg_kwargs(action_kwargs),
+            self._repeat_cfg_kwargs(camera_kwargs),
+            self._repeat_cfg_kwargs(timesteps_r_kwarg),
+            False,
+        )
+        return batched_noise_pred.chunk(2)
 
     def forward(
         self,
@@ -230,6 +326,8 @@ class DenoisingStage(PipelineStage):
         v2v_zero_pad = torch.zeros_like(latents) if batch.video_latent is not None else None
 
         # Run denoising loop
+        enable_batched_cfg = getattr(fastvideo_args, "enable_batched_cfg", True)
+        batched_cfg_disabled_for_request = False
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 # Skip if interrupted
@@ -337,50 +435,108 @@ class DenoisingStage(PipelineStage):
                             attn_metadata = None
                     else:
                         attn_metadata = None
-                    # TODO(will): finalize the interface. vLLM uses this to
-                    # support torch dynamo compilation. They pass in
-                    # attn_metadata, vllm_config, and num_tokens. We can pass in
-                    # fastvideo_args or training_args, and attn_metadata.
-                    batch.is_cfg_negative = False
-                    with set_forward_context(
-                            current_timestep=i,
-                            attn_metadata=attn_metadata,
-                            forward_batch=batch,
-                            # fastvideo_args=fastvideo_args
-                    ):
-                        # Run transformer
-                        noise_pred = current_model(
-                            latent_model_input,
-                            prompt_embeds,
-                            t_expand,
-                            guidance=guidance_expand,
-                            **image_kwargs,
-                            **pos_cond_kwargs,
-                            **action_kwargs,
-                            **camera_kwargs,
-                            **timesteps_r_kwarg,
-                        )
 
-                    if batch.do_classifier_free_guidance:
-                        batch.is_cfg_negative = True
+                    def run_transformer_branch(
+                        model_input: torch.Tensor,
+                        embeds: Any,
+                        timesteps_for_model: torch.Tensor,
+                        guidance_for_model: torch.Tensor | None,
+                        cond_kwargs: dict[str, Any],
+                        common_image_kwargs: dict[str, Any],
+                        common_action_kwargs: dict[str, Any],
+                        common_camera_kwargs: dict[str, Any],
+                        common_timestep_kwargs: dict[str, Any],
+                        is_cfg_negative: bool,
+                        *,
+                        current_timestep_index: int = i,
+                        branch_attn_metadata: Any = attn_metadata,
+                        branch_current_model: Any = current_model,
+                    ) -> torch.Tensor:
+                        batch.is_cfg_negative = is_cfg_negative
                         with set_forward_context(
-                                current_timestep=i,
-                                attn_metadata=attn_metadata,
+                                current_timestep=current_timestep_index,
+                                attn_metadata=branch_attn_metadata,
                                 forward_batch=batch,
+                                # fastvideo_args=fastvideo_args
                         ):
-                            noise_pred_uncond = current_model(
-                                latent_model_input,
-                                neg_prompt_embeds,
-                                t_expand,
-                                guidance=guidance_expand,
-                                **image_kwargs,
-                                **neg_cond_kwargs,
-                                **action_kwargs,
-                                **camera_kwargs,
-                                **timesteps_r_kwarg,
+                            return branch_current_model(
+                                model_input,
+                                embeds,
+                                timesteps_for_model,
+                                guidance=guidance_for_model,
+                                **common_image_kwargs,
+                                **cond_kwargs,
+                                **common_action_kwargs,
+                                **common_camera_kwargs,
+                                **common_timestep_kwargs,
                             )
 
-                        noise_pred_text = noise_pred
+                    def run_separate_cfg(
+                        *,
+                        branch_latent_model_input: torch.Tensor = latent_model_input,
+                        branch_t_expand: torch.Tensor = t_expand,
+                        branch_timesteps_r_kwarg: dict[str, Any] = timesteps_r_kwarg,
+                    ) -> tuple[torch.Tensor, torch.Tensor]:
+                        noise_pred_text = run_transformer_branch(
+                            branch_latent_model_input,
+                            prompt_embeds,
+                            branch_t_expand,
+                            guidance_expand,
+                            pos_cond_kwargs,
+                            image_kwargs,
+                            action_kwargs,
+                            camera_kwargs,
+                            branch_timesteps_r_kwarg,
+                            False,
+                        )
+                        noise_pred_uncond = run_transformer_branch(
+                            branch_latent_model_input,
+                            neg_prompt_embeds,
+                            branch_t_expand,
+                            guidance_expand,
+                            neg_cond_kwargs,
+                            image_kwargs,
+                            action_kwargs,
+                            camera_kwargs,
+                            branch_timesteps_r_kwarg,
+                            True,
+                        )
+                        return noise_pred_uncond, noise_pred_text
+
+                    if batch.do_classifier_free_guidance:
+                        if enable_batched_cfg and not batched_cfg_disabled_for_request:
+                            try:
+                                batch.is_cfg_negative = False
+                                noise_pred_uncond, noise_pred_text = self._run_batched_cfg_forward(
+                                    run_transformer_branch,
+                                    latent_model_input,
+                                    prompt_embeds,
+                                    neg_prompt_embeds,
+                                    t_expand,
+                                    guidance_expand,
+                                    pos_cond_kwargs,
+                                    neg_cond_kwargs,
+                                    image_kwargs,
+                                    action_kwargs,
+                                    camera_kwargs,
+                                    timesteps_r_kwarg,
+                                )
+                            except _BatchedCFGUnsupportedError as exc:
+                                batched_cfg_disabled_for_request = True
+                                logger.info("Disabling batched CFG for this request: %s", exc)
+                                noise_pred_uncond, noise_pred_text = run_separate_cfg()
+                            except RuntimeError as exc:
+                                if not self._is_cuda_oom(exc):
+                                    raise
+                                batched_cfg_disabled_for_request = True
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
+                                logger.warning("Disabling batched CFG for this request after CUDA OOM; "
+                                               "falling back to separate CFG forwards")
+                                noise_pred_uncond, noise_pred_text = run_separate_cfg()
+                        else:
+                            noise_pred_uncond, noise_pred_text = run_separate_cfg()
+
                         noise_pred = noise_pred_uncond + current_guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                         # Apply guidance rescale if needed
@@ -391,6 +547,19 @@ class DenoisingStage(PipelineStage):
                                 noise_pred_text,
                                 guidance_rescale=batch.guidance_rescale,
                             )
+                    else:
+                        noise_pred = run_transformer_branch(
+                            latent_model_input,
+                            prompt_embeds,
+                            t_expand,
+                            guidance_expand,
+                            pos_cond_kwargs,
+                            image_kwargs,
+                            action_kwargs,
+                            camera_kwargs,
+                            timesteps_r_kwarg,
+                            False,
+                        )
                     # Compute the previous noisy sample
                     latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
                     if fastvideo_args.pipeline_config.ti2v_task and batch.pil_image is not None:

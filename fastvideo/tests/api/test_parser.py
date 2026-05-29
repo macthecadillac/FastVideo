@@ -127,6 +127,7 @@ def test_load_run_config_supports_yaml_roundtrip(tmp_path) -> None:
                     "audio_vae_kwargs": {},
                 },
                 "enable_stage_verification": True,
+                "enable_batched_cfg": True,
                 "use_fsdp_inference": False,
                 "disable_autocast": False,
                 "quantization": None,

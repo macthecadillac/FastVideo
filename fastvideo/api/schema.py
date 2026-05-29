@@ -79,6 +79,7 @@ class EngineConfig:
     offload: OffloadConfig = field(default_factory=OffloadConfig)
     compile: CompileConfig = field(default_factory=CompileConfig)
     enable_stage_verification: bool = True
+    enable_batched_cfg: bool = True
     use_fsdp_inference: bool = False
     disable_autocast: bool = False
     quantization: QuantizationConfig | None = None

@@ -86,6 +86,7 @@ _FROM_PRETRAINED_CONVENIENCE_KWARGS = frozenset({
     "use_fsdp_inference",
     "disable_autocast",
     "enable_stage_verification",
+    "enable_batched_cfg",
     "dit_cpu_offload",
     "dit_layerwise_offload",
     "text_encoder_cpu_offload",

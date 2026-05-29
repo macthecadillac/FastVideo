@@ -165,6 +165,7 @@ class FastVideoArgs:
 
     # Stage verification
     enable_stage_verification: bool = True
+    enable_batched_cfg: bool = True
 
     # Prompt text file for batch processing
     prompt_txt: str | None = None
@@ -613,6 +614,12 @@ class FastVideoArgs:
             action=StoreBoolean,
             default=FastVideoArgs.enable_stage_verification,
             help="Enable input/output verification for pipeline stages",
+        )
+        parser.add_argument(
+            "--enable-batched-cfg",
+            action=StoreBoolean,
+            default=FastVideoArgs.enable_batched_cfg,
+            help="Batch classifier-free guidance into one DiT forward when possible",
         )
         parser.add_argument(
             "--override-text-encoder-safetensors",
