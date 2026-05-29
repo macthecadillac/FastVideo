@@ -5,7 +5,7 @@ This file tracks work for `OPTIMIZATION.md` point 2 on branch
 
 ## Handoff State
 
-Last updated: 2026-05-29 after validation milestone.
+Last updated: 2026-05-29 after commit and push.
 
 Branch state:
 
@@ -21,12 +21,12 @@ Branch state:
 
 Current milestone:
 
-- Implemented and validated generic batched CFG.
+- Implemented, validated, committed, and pushed generic batched CFG.
 
 Next resume point:
 
-- Commit and push the scoped point-2 changes on `opt-batched-cfg-denoising`.
-- Before moving to point 4, verify the commit includes this state file and excludes unrelated workspace artifacts.
+- Point 2 is complete.
+- Resume the broader optimization sequence by creating the point-4 branch from `main`.
 
 ## Scope
 
@@ -218,3 +218,24 @@ Handoff checkpoint:
 - Do not include unrelated workspace artifacts:
   staged `fastvideo/tests/modal/launch_l40s_job.py`, root `.dockerignore`, `ATTN_HOT_PATH.md`,
   `OPTIMIZATION.md`, Flux output directories, or `tests/local_tests/flux2/`.
+
+### Milestone 4: Commit and Push Complete
+
+- Status: complete.
+- Commit: `b21ef5a5` (`[perf]: batch standard cfg denoising`).
+- Branch: `opt-batched-cfg-denoising`.
+- Push target: `origin/opt-batched-cfg-denoising`.
+- GitHub PR URL offered by remote:
+  `https://github.com/macthecadillac/FastVideo/pull/new/opt-batched-cfg-denoising`.
+- Commit scope was verified with `git show --stat --oneline --name-only HEAD`; it includes only the point-2
+  implementation, tests, benchmark script, and this state file.
+- Unrelated workspace state remains after the commit and must continue to be ignored:
+  staged `fastvideo/tests/modal/launch_l40s_job.py`, root `.dockerignore`, `ATTN_HOT_PATH.md`,
+  `OPTIMIZATION.md`, Flux output directories, and `tests/local_tests/flux2/`.
+
+Final handoff:
+
+- Point 2 has no known remaining implementation work.
+- The complete test/benchmark record is in Milestone 3 above.
+- Next point should start from a fresh branch off `main`, not from this point-2 branch, unless the user explicitly
+  asks to stack the optimization branches.
