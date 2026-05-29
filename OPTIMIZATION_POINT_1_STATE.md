@@ -5,7 +5,7 @@ This file tracks work for `OPTIMIZATION.md` point 1 on branch
 
 ## Handoff State
 
-Last updated: 2026-05-29 after validation milestone.
+Last updated: 2026-05-29 after commit and push.
 
 Branch state:
 
@@ -19,12 +19,12 @@ Branch state:
 
 Current milestone:
 
-- Implemented and validated the point-1 gating change.
+- Implemented, validated, committed, and pushed the point-1 gating change.
 
 Next resume point:
 
-- Commit and push the scoped point-1 changes on `opt-gate-validation-checks`.
-- Before moving to point 2, verify the commit includes this state file and excludes unrelated workspace artifacts.
+- Point 1 is complete.
+- Resume the broader optimization sequence by creating the point-2 branch from `main`.
 
 ## Scope
 
@@ -170,3 +170,24 @@ Handoff checkpoint:
 - Do not include unrelated workspace artifacts:
   staged `fastvideo/tests/modal/launch_l40s_job.py`, root `.dockerignore`, `ATTN_HOT_PATH.md`,
   `OPTIMIZATION.md`, Flux output directories, or `tests/local_tests/flux2/`.
+
+### Milestone 3: Commit and Push Complete
+
+- Status: complete.
+- Commit: `a5fca368` (`[perf]: gate expensive tensor validation`).
+- Branch: `opt-gate-validation-checks`.
+- Push target: `origin/opt-gate-validation-checks`.
+- GitHub PR URL offered by remote:
+  `https://github.com/macthecadillac/FastVideo/pull/new/opt-gate-validation-checks`.
+- Commit scope was verified with `git show --stat --oneline --name-only HEAD`; it includes only the point-1
+  implementation, tests, benchmark script, and this state file.
+- Unrelated workspace state remains after the commit and must continue to be ignored:
+  staged `fastvideo/tests/modal/launch_l40s_job.py`, root `.dockerignore`, `ATTN_HOT_PATH.md`,
+  `OPTIMIZATION.md`, Flux output directories, and `tests/local_tests/flux2/`.
+
+Final handoff:
+
+- Point 1 has no known remaining implementation work.
+- The complete test/benchmark record is in Milestone 2 above.
+- Next point should start from a fresh branch off `main`, not from this point-1 branch, unless the user explicitly
+  asks to stack the optimization branches.
