@@ -5,7 +5,7 @@ This file tracks work for `OPTIMIZATION.md` point 4 on branch
 
 ## Handoff State
 
-Last updated: 2026-05-29 after complete Modal L40S validation and benchmark results.
+Last updated: 2026-05-29 after complete Modal L40S validation, benchmark, and before/after parity results.
 
 Branch state:
 
@@ -25,6 +25,9 @@ Current milestone:
 
 - Point 4 implementation, tests, and benchmark are complete.
 - Remote Modal L40S pytest and benchmark passed.
+- Added and ran a real-pipeline parity test comparing the lazy no-return path
+  against the eager return-frames path.
+- Parity result: exact match for captured decoded output and returned samples.
 - Ready to commit and push `opt-lazy-output-postprocess`.
 
 Next resume point:
@@ -33,6 +36,7 @@ Next resume point:
   - `fastvideo/entrypoints/video_generator.py`
   - `fastvideo/tests/entrypoints/test_video_generator.py`
   - `tests/local_tests/benchmark_lazy_output_postprocess.py`
+  - `tests/local_tests/parity_lazy_output_postprocess.py`
   - `OPTIMIZATION_POINT_4_STATE.md`
 - Push branch `opt-lazy-output-postprocess` to origin.
 - After point 4 is pushed, decide whether to continue with another requested
@@ -257,3 +261,73 @@ Final handoff checkpoint:
   staged/untracked workspace files remain present.
 - Do not commit the pre-existing staged `fastvideo/tests/modal/launch_l40s_job.py`
   unless the user explicitly asks.
+
+### Milestone 4: Real-Pipeline Parity Test
+
+- Status: complete.
+- Added `tests/local_tests/parity_lazy_output_postprocess.py`.
+- Test purpose:
+  - Build one Wan 2.1 1.3B pixel-output generator with a fixed seed.
+  - Wrap `executor.execute_forward` to capture the raw decoded GPU output tensor before output postprocessing.
+  - Run the optimized lazy mode with `return_frames=False` and `save_video=False`.
+  - Run the eager return mode with `return_frames=True` and `save_video=False`.
+  - Compare captured lazy decoded output against captured eager decoded output.
+  - Compare captured lazy decoded output against the eager path's returned CPU `samples`.
+- Local checks for the new parity reproducer:
+  - `python -m py_compile tests/local_tests/parity_lazy_output_postprocess.py` passed.
+  - `git diff --check -- tests/local_tests/parity_lazy_output_postprocess.py` passed.
+  - `pre-commit run --files tests/local_tests/parity_lazy_output_postprocess.py` passed the only applicable hook
+    (`Check for spaces in all filenames`); project lint hooks intentionally skipped `tests/local_tests`.
+- Modal L40S command:
+  `python tests/local_tests/parity_lazy_output_postprocess.py --num-gpus 1 --sp-size 1 --tp-size 1 --height 256 --width 256 --num-frames 17 --num-inference-steps 4`
+- Modal run URL:
+  `https://modal.com/apps/hao-ai-lab/main/ap-GeAwbRplLCbKj9pHcAXXdf`
+- Branch commit under test:
+  `c8c0b79e737a6b70a7f885b853a8237a1ca07519`.
+- Model/profile:
+  - Model: `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`.
+  - Shape: decoded pixel output `[1, 3, 17, 256, 256]`.
+  - Resolution: `256x256`.
+  - Frames: `17`.
+  - Inference steps: `4`.
+  - Seed: `1024`.
+  - Guidance scale: `1.0`.
+  - Embedded CFG scale: `6.0`.
+- Lazy-result API behavior:
+  - `lazy_result_samples_returned`: `false`.
+  - `lazy_result_frames_returned`: `false`.
+- Eager-result API behavior:
+  - `eager_result_samples_returned`: `true`.
+  - `eager_result_frames_returned`: `true`.
+- Captured lazy output vs captured eager output:
+  - `exact_equal`: `true`.
+  - `allclose_atol_0_rtol_0`: `true`.
+  - `allclose_atol_1e_6_rtol_1e_6`: `true`.
+  - `allclose_atol_1e_5_rtol_1e_5`: `true`.
+  - `max_abs`: `0.0`.
+  - `mean_abs`: `0.0`.
+  - `num_different`: `0`.
+- Captured lazy output vs eager returned samples:
+  - `exact_equal`: `true`.
+  - `allclose_atol_0_rtol_0`: `true`.
+  - `allclose_atol_1e_6_rtol_1e_6`: `true`.
+  - `allclose_atol_1e_5_rtol_1e_5`: `true`.
+  - `max_abs`: `0.0`.
+  - `mean_abs`: `0.0`.
+  - `num_different`: `0`.
+- Interpretation:
+  - Point 4 only changes whether CPU samples and NumPy frame lists are materialized.
+  - For the tested real Wan pipeline request, the optimized lazy no-return path preserves the decoded tensor exactly.
+  - This satisfies near bit-by-bit parity; it is stronger than tolerance-based parity because the captured tensors are
+    exactly equal.
+
+Handoff checkpoint:
+
+- Branch/worktree: detached worktree at `origin/opt-lazy-output-postprocess` commit
+  `c8c0b79e737a6b70a7f885b853a8237a1ca07519`.
+- New uncommitted parity-scope files after this milestone:
+  - `OPTIMIZATION_POINT_4_STATE.md`
+  - `tests/local_tests/parity_lazy_output_postprocess.py`
+- Commit and push these along with the already-complete point-4 implementation files if they have not yet been pushed
+  from the active branch. If committing from this detached worktree, push with
+  `git push origin HEAD:opt-lazy-output-postprocess`.
