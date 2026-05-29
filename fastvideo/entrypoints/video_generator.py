@@ -741,16 +741,12 @@ class VideoGenerator:
         thread = threading.Thread(target=execute_forward_thread)
         thread.start()
         latent_batch_size = _infer_latent_batch_size(batch)
-        # When ``output_type == "latent"`` the forward output has latent
-        # shape (e.g. ``[B, C_latent, T_latent, H_latent, W_latent]``)
-        # rather than the pre-allocation's pixel shape. Skip the pinned
-        # ~50 MB buffer entirely; we always fall through to the
-        # ``samples = output_batch.output.cpu()`` branch below in that
-        # mode. ``skip_pixel_prealloc`` also gates the slow-path warning.
-        skip_pixel_prealloc = fastvideo_args.output_type == "latent"
-        if skip_pixel_prealloc:
-            samples = torch.empty(0, device='cpu')
-        else:
+        # Only preallocate CPU samples when they will be returned. Saving can
+        # build frame arrays directly from the forward output without first
+        # materializing a full CPU samples tensor.
+        preallocate_cpu_samples = batch.return_frames and fastvideo_args.output_type != "latent"
+        samples: torch.Tensor | None = None
+        if preallocate_cpu_samples:
             samples = torch.empty(
                 (latent_batch_size, 3, sampling_param.num_frames, sampling_param.height, sampling_param.width),
                 device='cpu',
@@ -766,13 +762,20 @@ class VideoGenerator:
             raise RuntimeError("Forward execution returned no output tensor. "
                                "This usually means the executor/pipeline failed earlier.")
 
-        if output_batch.output.shape == samples.shape:
-            samples.copy_(output_batch.output)
-        else:
-            if not skip_pixel_prealloc:
-                logger.warning("Output shape %s does not match expected shape %s; use slow path",
-                               output_batch.output.shape, samples.shape)
-            samples = output_batch.output.cpu()
+        is_latent_output = fastvideo_args.output_type == "latent"
+        audio_only = bool(output_batch.extra.get("audio_only"))
+        save_to_disk = batch.save_video and not is_latent_output
+        needs_cpu_samples = batch.return_frames
+        needs_frames = (batch.return_frames or save_to_disk) and not is_latent_output and not audio_only
+
+        if needs_cpu_samples:
+            if samples is not None and output_batch.output.shape == samples.shape:
+                samples.copy_(output_batch.output)
+            else:
+                if samples is not None:
+                    logger.warning("Output shape %s does not match expected shape %s; use slow path",
+                                   output_batch.output.shape, samples.shape)
+                samples = output_batch.output.cpu()
         logging_info = output_batch.logging_info
 
         gen_time = time.perf_counter() - start_time
@@ -789,27 +792,28 @@ class VideoGenerator:
         #   2. Audio-only workload — `samples` is a 1×3×1×8×8 placeholder
         #      no caller will use; skip the grid loop and save a `.wav`.
         #   3. Pixel video / image — the historical happy path.
-        is_latent_output = fastvideo_args.output_type == "latent"
-        audio_only = bool(output_batch.extra.get("audio_only"))
-
         postprocess_start = time.perf_counter()
         frames: list[np.ndarray] | None
-        if is_latent_output or audio_only:
-            frames = None if is_latent_output else []
-        else:
-            videos = rearrange(samples, "b c t h w -> t b c h w")
+        if is_latent_output:
+            frames = None
+        elif audio_only:
+            frames = []
+        elif needs_frames:
+            frame_source = samples if samples is not None else output_batch.output
+            videos = rearrange(frame_source, "b c t h w -> t b c h w")
             frames = []
             for x in videos:
                 x = torchvision.utils.make_grid(x, nrow=6)
                 x = x.permute(1, 2, 0).squeeze(-1)
                 x = (x * 255).to(torch.uint8)
                 frames.append(x.contiguous().cpu().numpy())
+        else:
+            frames = None
         postprocess_time = time.perf_counter() - postprocess_start
         logger.info("PostDecodeFrameProcessStage completed in %.3f s", postprocess_time)
         if logging_info is not None:
             logging_info.add_stage_execution_time("PostDecodeFrameProcessStage", postprocess_time)
 
-        save_to_disk = batch.save_video and not is_latent_output
         save_video_time = 0.0
         audio_mux_time = 0.0
         if save_to_disk:
