@@ -5,7 +5,7 @@ This file tracks work for `OPTIMIZATION.md` point 2 on branch
 
 ## Handoff State
 
-Last updated: 2026-05-29 after commit and push.
+Last updated: 2026-05-29 after Modal L40S before/after parity diagnostics.
 
 Branch state:
 
@@ -21,12 +21,19 @@ Branch state:
 
 Current milestone:
 
-- Implemented, validated, committed, and pushed generic batched CFG.
+- Implemented, benchmarked, committed, and pushed generic batched CFG.
+- Added and ran real-pipeline parity diagnostics comparing separate-forward CFG
+  against the batched CFG candidate.
+- Strict parity result: failed on both 1x L40S (`sp_size=1`) and 2x L40S
+  (`sp_size=2`), including at `atol=1e-2, rtol=1e-2`.
 
 Next resume point:
 
-- Point 2 is complete.
-- Resume the broader optimization sequence by creating the point-4 branch from `main`.
+- Treat point 2 as performance-positive but not strict-parity-cleared.
+- Do not merge it as a default-on optimization under a near bit-by-bit parity
+  requirement without either fixing the numerical divergence or explicitly
+  accepting a looser visual/quality gate.
+- Commit and push the added parity reproducer plus this state-file update.
 
 ## Scope
 
@@ -239,3 +246,118 @@ Final handoff:
 - The complete test/benchmark record is in Milestone 3 above.
 - Next point should start from a fresh branch off `main`, not from this point-2 branch, unless the user explicitly
   asks to stack the optimization branches.
+
+### Milestone 5: Real-Pipeline Parity Diagnostics
+
+- Status: complete.
+- Added `tests/local_tests/parity_batched_cfg.py`.
+- Test purpose:
+  - Run the same Wan 2.1 1.3B latent-output request with a fixed seed.
+  - Reference mode: `enable_batched_cfg=False`, which uses the original separate positive/negative transformer
+    forwards.
+  - Candidate mode: `enable_batched_cfg=True`, which uses the new concat-and-chunk batched CFG path.
+  - Compare returned latent samples.
+  - A diagnostic `--determinism-control` mode can run the reference mode twice to prove the baseline is deterministic.
+- Local checks for the parity reproducer:
+  - `python -m py_compile tests/local_tests/parity_batched_cfg.py` passed.
+  - `git diff --check -- tests/local_tests/parity_batched_cfg.py` passed.
+  - `pre-commit run --files tests/local_tests/parity_batched_cfg.py` passed the only applicable hook
+    (`Check for spaces in all filenames`); project lint hooks intentionally skipped `tests/local_tests`.
+
+1x L40S strict parity run:
+
+- Modal command:
+  `python tests/local_tests/parity_batched_cfg.py --num-gpus 1 --sp-size 1 --tp-size 1 --height 256 --width 256 --num-frames 17 --num-inference-steps 4 --guidance-scale 3.0 --embedded-cfg-scale 6.0`
+- Modal run URL:
+  `https://modal.com/apps/hao-ai-lab/main/ap-6sb2He3ul4VJaiN2wokzqJ`
+- Branch commit under test:
+  `9b7ad216c2ee705b640bf192b4c559b065b03f29`.
+- Result:
+  - `exact_equal`: `false`.
+  - `allclose_atol_1e_5_rtol_1e_5`: `false`.
+  - `allclose_atol_1e_4_rtol_1e_4`: `false`.
+  - `allclose_atol_1e_3_rtol_1e_3`: `false`.
+  - `allclose_atol_1e_2_rtol_1e_2`: `false`.
+  - `max_abs`: `2.914742946624756`.
+  - `mean_abs`: `0.12020133435726166`.
+  - `max_relative`: `10589.470703125`.
+  - `mean_relative`: `0.8088246583938599`.
+  - `num_different`: `81912` of `81920` latent values.
+- Interpretation:
+  - This rules out sequence-parallel communication as the only cause; the divergence reproduces with `sp_size=1`.
+  - The candidate is not near bit-by-bit equivalent to the separate-forward CFG path for this Wan profile.
+
+1x L40S determinism-control run:
+
+- Modal command:
+  `python tests/local_tests/parity_batched_cfg.py --num-gpus 1 --sp-size 1 --tp-size 1 --height 256 --width 256 --num-frames 17 --num-inference-steps 4 --guidance-scale 3.0 --embedded-cfg-scale 6.0 --determinism-control`
+- Modal run URL:
+  `https://modal.com/apps/hao-ai-lab/main/ap-VMSFxXlsxJjccfvlBBA9aU`
+- Branch commit under test:
+  `9b7ad216c2ee705b640bf192b4c559b065b03f29`.
+- Candidate comparison result:
+  - Same as the 1x strict parity run above: failed at every threshold through `atol=1e-2, rtol=1e-2`.
+  - `max_abs`: `2.914742946624756`.
+  - `mean_abs`: `0.12020133435726166`.
+  - `num_different`: `81912`.
+- Reference repeat control result:
+  - `exact_equal`: `true`.
+  - `allclose_atol_0_rtol_0`: `true`.
+  - `allclose_atol_1e_6_rtol_1e_6`: `true`.
+  - `max_abs`: `0.0`.
+  - `mean_abs`: `0.0`.
+  - `num_different`: `0`.
+- Interpretation:
+  - The original separate-forward CFG path is deterministic for the tested request.
+  - The parity failure is specific to the batched CFG candidate, not random generator or pipeline nondeterminism.
+
+2x L40S sequence-parallel strict parity run:
+
+- Modal command:
+  `python tests/local_tests/parity_batched_cfg.py --num-gpus 2 --sp-size 2 --tp-size 1 --height 256 --width 256 --num-frames 17 --num-inference-steps 4 --guidance-scale 3.0 --embedded-cfg-scale 6.0`
+- Modal run URL:
+  `https://modal.com/apps/hao-ai-lab/main/ap-x9wz0TF9YkvQpSK7L2yhBW`
+- Branch commit under test:
+  `9b7ad216c2ee705b640bf192b4c559b065b03f29`.
+- Result:
+  - `exact_equal`: `false`.
+  - `allclose_atol_1e_5_rtol_1e_5`: `false`.
+  - `allclose_atol_1e_4_rtol_1e_4`: `false`.
+  - `allclose_atol_1e_3_rtol_1e_3`: `false`.
+  - `allclose_atol_1e_2_rtol_1e_2`: `false`.
+  - `max_abs`: `2.0612549781799316`.
+  - `mean_abs`: `0.10603759437799454`.
+  - `max_relative`: `15423.3095703125`.
+  - `mean_relative`: `0.9954845309257507`.
+  - `num_different`: `81915` of `81920` latent values.
+- Interpretation:
+  - The sequence-parallel profile also fails strict parity.
+  - The earlier point-2 benchmark remains useful as a performance measurement
+    (`1.82x` faster DiT stage, `18.1%` faster end-to-end for the tested small CFG-heavy profile), but those gains are
+    not correctness-cleared under the near bit-by-bit criterion.
+
+Likely technical explanation and risk assessment:
+
+- The batched CFG implementation changes the transformer execution shape from two batch-1 forwards to one batch-2
+  forward.
+- That is mathematically intended to be equivalent, but it changes attention-kernel launch shapes and reduction order.
+- In a diffusion loop with guidance scale `3.0`, small per-step prediction differences can compound into much larger
+  final latent differences.
+- The measured divergence is larger than a near-bitwise tolerance and should be treated as a failed strict parity gate.
+- No evidence from these tests points to random nondeterminism in the old path; the reference repeat was exactly equal.
+
+Handoff checkpoint:
+
+- Branch: `opt-batched-cfg-denoising`.
+- Previous implementation commit remains `b21ef5a5` (`[perf]: batch standard cfg denoising`) with the later
+  documentation commit `9b7ad216`.
+- New uncommitted parity-scope files after this milestone:
+  - `OPTIMIZATION_POINT_2_STATE.md`
+  - `tests/local_tests/parity_batched_cfg.py`
+- Suggested next engineering decision:
+  - If strict latent parity is required, change `enable_batched_cfg` to default `False` or remove the default-on path,
+    then keep the optimization as an explicit experimental opt-in while root-causing the divergence.
+  - If visual/quality parity is acceptable instead, run SSIM or decoded-output comparison before accepting the
+    benchmark gains.
+- Commit and push only the parity reproducer plus this state-file update unless separately changing implementation
+  defaults.
