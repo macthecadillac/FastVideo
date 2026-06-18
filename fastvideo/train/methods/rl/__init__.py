@@ -2,5 +2,6 @@
 """RL training methods."""
 
 from fastvideo.train.methods.rl.diffusion_nft import DiffusionNFTMethod
+from fastvideo.train.methods.rl.mix_grpo import MixGRPOMethod
 
-__all__ = ["DiffusionNFTMethod"]
+__all__ = ["DiffusionNFTMethod", "MixGRPOMethod"]

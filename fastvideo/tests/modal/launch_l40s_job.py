@@ -113,9 +113,11 @@ def _split_patch_paths(patch_paths: str) -> list[str]:
     return [path.strip() for path in patch_paths.split(",") if path.strip()]
 
 
-def _build_local_patch(patch_paths: str) -> str:
+def _build_local_patch(patch_paths: str, patch_base: str = "") -> str:
     paths = _split_patch_paths(patch_paths)
     diff_args = ["diff", "--binary"]
+    if patch_base.strip():
+        diff_args.append(patch_base.strip())
     if paths:
         diff_args.extend(["--", *paths])
     patch_parts = [_run_local_git_command_allow_diff(diff_args)]
@@ -488,6 +490,7 @@ def main(
     env_vars: str = "",
     apply_local_patch: bool = False,
     patch_paths: str = "",
+    patch_base: str = "",
     wait: bool = True,
     commit_volume: bool = False,
 ):
@@ -505,7 +508,7 @@ def main(
         print(f"PR ref: {resolved_pr_number}")
     local_patch_b64 = ""
     if apply_local_patch:
-        patch = _build_local_patch(patch_paths)
+        patch = _build_local_patch(patch_paths, patch_base)
         local_patch_b64 = base64.b64encode(patch.encode("utf-8")).decode("ascii")
         print(f"Local patch payload: {len(patch)} bytes")
 

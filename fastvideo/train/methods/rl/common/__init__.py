@@ -12,6 +12,9 @@ from fastvideo.train.methods.rl.common.sampling import (
     DiffusionSampler,
     SamplingConfig,
     SamplingResult,
+    SamplingTrace,
+    flow_ode_step,
+    flow_sde_step_with_logprob,
     sde_step_mask,
 )
 from fastvideo.train.methods.rl.common.prompt_sampling import (
@@ -32,10 +35,13 @@ __all__ = [
     "RLValidationConfig",
     "SamplingConfig",
     "SamplingResult",
+    "SamplingTrace",
     "compute_clipped_grpo_policy_loss",
     "compute_grouped_advantages",
     "compute_multi_reward_advantages",
     "distributed_k_repeat_indices",
+    "flow_ode_step",
+    "flow_sde_step_with_logprob",
     "media_to_video_array",
     "repeat_advantages_over_timesteps",
     "sde_step_mask",

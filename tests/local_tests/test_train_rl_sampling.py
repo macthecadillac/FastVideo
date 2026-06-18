@@ -218,6 +218,28 @@ def test_mixed_sampler_renoises_only_configured_window():
     assert model.predict_x0_calls == 1
 
 
+def test_sampler_with_log_probs_records_only_sde_window():
+    model = _FakeModel()
+    sampler = DiffusionSampler(
+        SamplingConfig(
+            num_steps=4,
+            trajectory="mixed_ode_sde",
+            sde_window_start=1,
+            sde_window_size=2,
+            sde_noise_scale=0.7,
+        ))
+
+    result = sampler.sample_with_log_probs(model, _batch(), generator=torch.Generator().manual_seed(0))
+
+    assert result.trace is not None
+    assert result.trace.latents.shape == (2, 2, 1, 3, 4, 4)
+    assert result.trace.next_latents.shape == (2, 2, 1, 3, 4, 4)
+    assert result.trace.timesteps.shape == (2, 2)
+    assert result.trace.log_probs.shape == (2, 2)
+    assert result.trace.step_indices.tolist() == [1, 2]
+    assert model.predict_noise_calls == 4
+
+
 def test_diffusion_nft_config_uses_rl_sampler_not_dmd_pipeline():
     config_path = "examples/train/configs/rl/wan/diffusion_nft_pick_clip.yaml"
 
@@ -240,6 +262,21 @@ def test_diffusion_nft_config_uses_rl_sampler_not_dmd_pipeline():
     assert cfg.method["validation"]["num_steps"] == 40
     assert cfg.method["validation"]["num_prompts"] == 16
     assert cfg.method["validation"]["log_samples"] is True
+
+
+def test_mixgrpo_config_uses_sde_window_and_grpo_method():
+    config_path = "examples/train/configs/rl/wan/mixgrpo_pick_clip.yaml"
+
+    cfg = load_run_config(config_path)
+
+    assert cfg.method["_target_"] == "fastvideo.train.methods.rl.mix_grpo.MixGRPOMethod"
+    assert cfg.method["sampling"]["scheduler"] == "flow_match_euler"
+    assert cfg.method["sampling"]["trajectory"] == "mixed_ode_sde"
+    assert cfg.method["sampling"]["sde_window_start"] == 5
+    assert cfg.method["sampling"]["sde_window_size"] == 10
+    assert cfg.method["sampling"]["sde_noise_scale"] == 0.7
+    assert cfg.method["clip_range"] == 0.0001
+    assert cfg.method["weight_advantages"] is False
 
 
 def test_validation_shard_indices_are_stable_and_padded():
