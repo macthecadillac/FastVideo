@@ -1,4 +1,5 @@
 import pytest
+import torch
 
 from fastvideo.train.methods.rl.common import (
     PromptRefinementConfig,
@@ -77,3 +78,46 @@ def test_prompt_refinement_rejects_template_without_prompt_placeholder():
             "mode": "template",
             "template": "cinematic render",
         })
+
+
+def test_prompt_refinement_model_mode_uses_refiner_and_preserves_original_prefix():
+
+    class _PromptRefiner:
+
+        def refine_prompts(self, *, prompts, raw_batch, config, generator):
+            del raw_batch, config, generator
+            return {
+                "prompts": [f"refined {prompt}" for prompt in prompts],
+                "log_probs": torch.tensor([-0.1, -0.2]),
+                "metadata": [{"rank": idx} for idx, _ in enumerate(prompts)],
+            }
+
+    raw_batch = {
+        "caption_text": ["first", "second", "third"],
+    }
+    config = PromptRefinementConfig.from_mapping({
+        "enabled": True,
+        "mode": "model",
+        "num_original_prompts": 1,
+    })
+
+    refined_batch, result = refine_prompt_batch(raw_batch, config, prompt_refiner=_PromptRefiner())
+
+    assert refined_batch["caption_text"] == ["first", "refined second", "refined third"]
+    assert result.original_prompts == ["first", "second", "third"]
+    assert result.prompts == ["first", "refined second", "refined third"]
+    assert result.refined_mask == [False, True, True]
+    assert result.policy_mask == [False, True, True]
+    assert result.metadata == [{}, {"rank": 0}, {"rank": 1}]
+    assert result.refiner_log_probs is not None
+    torch.testing.assert_close(result.refiner_log_probs, torch.tensor([0.0, -0.1, -0.2]))
+
+
+def test_prompt_refinement_model_mode_requires_refiner():
+    config = PromptRefinementConfig.from_mapping({
+        "enabled": True,
+        "mode": "model",
+    })
+
+    with pytest.raises(ValueError, match="prompt_refiner"):
+        refine_prompt_batch({"caption_text": ["prompt"]}, config)
