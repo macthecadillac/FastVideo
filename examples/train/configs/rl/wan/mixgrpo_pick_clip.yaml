@@ -53,6 +53,11 @@ method:
   advantage_epsilon: 0.0001
   weight_advantages: false
   kl_beta: 0.0001
+  prompt_refinement:
+    enabled: false
+    mode: dataset_column
+    refined_prompt_key: refined_prompt
+    num_original_prompts: 0
   decay_type: 1
   adv_clip_max: 5
   max_grad_norm: 1.0

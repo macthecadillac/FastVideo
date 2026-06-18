@@ -21,6 +21,11 @@ from fastvideo.train.methods.rl.common.prompt_sampling import (
     KRepeatSample,
     distributed_k_repeat_indices,
 )
+from fastvideo.train.methods.rl.common.prompt_refinement import (
+    PromptRefinementConfig,
+    PromptRefinementResult,
+    refine_prompt_batch,
+)
 from fastvideo.train.methods.rl.common.validation import (
     RLValidationConfig,
     media_to_video_array,
@@ -32,6 +37,8 @@ __all__ = [
     "DiffusionSampler",
     "GroupedAdvantageConfig",
     "KRepeatSample",
+    "PromptRefinementConfig",
+    "PromptRefinementResult",
     "RLValidationConfig",
     "SamplingConfig",
     "SamplingResult",
@@ -43,6 +50,7 @@ __all__ = [
     "flow_ode_step",
     "flow_sde_step_with_logprob",
     "media_to_video_array",
+    "refine_prompt_batch",
     "repeat_advantages_over_timesteps",
     "sde_step_mask",
     "validation_caption",

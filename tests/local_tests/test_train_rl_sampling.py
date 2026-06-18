@@ -277,6 +277,8 @@ def test_mixgrpo_config_uses_sde_window_and_grpo_method():
     assert cfg.method["sampling"]["sde_noise_scale"] == 0.7
     assert cfg.method["clip_range"] == 0.0001
     assert cfg.method["weight_advantages"] is False
+    assert cfg.method["prompt_refinement"]["enabled"] is False
+    assert cfg.method["prompt_refinement"]["refined_prompt_key"] == "refined_prompt"
 
 
 def test_validation_shard_indices_are_stable_and_padded():

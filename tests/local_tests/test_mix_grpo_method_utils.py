@@ -168,3 +168,21 @@ def test_mixgrpo_training_timestep_loss_returns_finite_grpo_terms():
     }
     assert torch.isfinite(losses["total_loss"])
     assert torch.equal(backward_ctx[0], sample["timesteps"][:, 0])
+
+
+def test_mixgrpo_reward_diagnostics_include_prompt_refinement_stats():
+    method = object.__new__(MixGRPOMethod)
+    method._trained_prompt_hashes = set()
+    sample_items = [{
+        "prompts": ["a", "a"],
+        "prompt_refined_mask": [False, True],
+    }, {
+        "prompts": ["b", "b"],
+        "prompt_refined_mask": [True, True],
+    }]
+    rewards = {"avg": torch.tensor([1.0, 3.0, 2.0, 6.0])}
+
+    metrics = method._reward_diagnostic_metrics(sample_items, rewards)
+
+    assert metrics["prompt_refinement/refined_ratio"] == 0.75
+    assert metrics["prompt_refinement/refined_count"] == 3.0

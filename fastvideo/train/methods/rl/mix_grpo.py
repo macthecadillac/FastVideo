@@ -11,11 +11,14 @@ import torch.distributed as dist
 from tqdm.auto import tqdm
 
 from fastvideo.pipelines import TrainingBatch
+from fastvideo.train.methods.base import LogScalar
 from fastvideo.train.methods.rl.common import (
     GroupedAdvantageConfig,
+    PromptRefinementConfig,
     compute_clipped_grpo_policy_loss,
     compute_multi_reward_advantages,
     flow_sde_step_with_logprob,
+    refine_prompt_batch,
     repeat_advantages_over_timesteps,
     sde_step_mask,
 )
@@ -44,6 +47,8 @@ class MixGRPOMethod(DiffusionNFTMethod):
             self.method_config.get("weight_advantages", False),
             where="method.weight_advantages",
         )
+        self._prompt_refinement_config = PromptRefinementConfig.from_mapping(
+            self.method_config.get("prompt_refinement"))
         if self._clip_range < 0.0:
             raise ValueError("method.clip_range must be non-negative")
         if self._advantage_epsilon <= 0.0:
@@ -70,7 +75,8 @@ class MixGRPOMethod(DiffusionNFTMethod):
                     disable=not self._show_terminal_progress(),
             ):
                 raw_batch = self._sample_prompt_batch(data_stream, iteration, batch_idx)
-                prompts = self._extract_prompts(raw_batch)
+                raw_batch, prompt_refinement = refine_prompt_batch(raw_batch, self._prompt_refinement_config)
+                prompts = prompt_refinement.prompts
                 batch = self.student.prepare_batch(
                     raw_batch,
                     generator=self.cuda_generator,
@@ -97,8 +103,27 @@ class MixGRPOMethod(DiffusionNFTMethod):
                     "latents_clean": latents_clean.detach(),
                     "media": media.detach().cpu(),
                     "prompts": prompts,
+                    "source_prompts": prompt_refinement.original_prompts,
+                    "prompt_refined_mask": prompt_refinement.refined_mask,
                 })
         return sample_items
+
+    def _reward_diagnostic_metrics(
+        self,
+        sample_items: list[dict[str, Any]],
+        rewards: dict[str, torch.Tensor],
+    ) -> dict[str, LogScalar]:
+        metrics = super()._reward_diagnostic_metrics(sample_items, rewards)
+        refined_mask = [
+            bool(refined)
+            for item in sample_items
+            for refined in item.get("prompt_refined_mask", [])
+        ]
+        if refined_mask:
+            refined_count = sum(1 for refined in refined_mask if refined)
+            metrics["prompt_refinement/refined_ratio"] = refined_count / len(refined_mask)
+            metrics["prompt_refinement/refined_count"] = float(refined_count)
+        return metrics
 
     def _compute_advantages(
         self,
