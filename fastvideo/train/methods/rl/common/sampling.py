@@ -15,7 +15,7 @@ from fastvideo.pipelines import TrainingBatch
 from fastvideo.train.models.base import ModelBase
 
 SchedulerName = Literal["flow_match_euler", "model_default"]
-TrajectoryName = Literal["ode", "sde_reflow"]
+TrajectoryName = Literal["ode", "sde_reflow", "mixed_ode_sde"]
 
 
 @dataclass(slots=True)
@@ -28,6 +28,9 @@ class SamplingConfig:
     flow_shift: float | None = None
     timesteps: list[float] | None = None
     sigmas: list[float] | None = None
+    sde_window_size: int | None = None
+    sde_window_start: int = 0
+    sde_noise_scale: float = 1.0
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> SamplingConfig:
@@ -39,6 +42,9 @@ class SamplingConfig:
             "flow_shift",
             "num_steps",
             "scheduler",
+            "sde_noise_scale",
+            "sde_window_size",
+            "sde_window_start",
             "sigmas",
             "timesteps",
             "trajectory",
@@ -53,9 +59,9 @@ class SamplingConfig:
                              "{flow_match_euler, model_default}, got "
                              f"{raw.get('scheduler')!r}")
         trajectory = str(raw.get("trajectory", "ode") or "ode").strip().lower()
-        if trajectory not in {"ode", "sde_reflow"}:
+        if trajectory not in {"ode", "sde_reflow", "mixed_ode_sde"}:
             raise ValueError("method.sampling.trajectory must be one of "
-                             "{ode, sde_reflow}, got "
+                             "{ode, sde_reflow, mixed_ode_sde}, got "
                              f"{raw.get('trajectory')!r}")
         timesteps = raw.get("timesteps")
         sigmas = raw.get("sigmas")
@@ -72,6 +78,24 @@ class SamplingConfig:
         num_steps = int(raw.get("num_steps", 25) or 25)
         if num_steps <= 0:
             raise ValueError("method.sampling.num_steps must be positive")
+        schedule_len = len(timesteps or sigmas or []) or num_steps
+        sde_window_size = raw.get("sde_window_size", None)
+        if sde_window_size is not None:
+            sde_window_size = int(sde_window_size)
+            if sde_window_size <= 0:
+                raise ValueError("method.sampling.sde_window_size must be positive when set")
+        elif trajectory == "mixed_ode_sde":
+            sde_window_size = schedule_len
+        sde_window_start = int(raw.get("sde_window_start", 0) or 0)
+        if sde_window_start < 0:
+            raise ValueError("method.sampling.sde_window_start must be non-negative")
+        if sde_window_size is not None and sde_window_start + sde_window_size > schedule_len:
+            raise ValueError("method.sampling SDE window exceeds the sampling schedule "
+                             f"({sde_window_start} + {sde_window_size} > {schedule_len})")
+        sde_noise_scale_raw = raw.get("sde_noise_scale", 1.0)
+        sde_noise_scale = 1.0 if sde_noise_scale_raw is None else float(sde_noise_scale_raw)
+        if sde_noise_scale < 0.0:
+            raise ValueError("method.sampling.sde_noise_scale must be non-negative")
         return cls(
             num_steps=num_steps,
             scheduler=scheduler,  # type: ignore[arg-type]
@@ -79,6 +103,9 @@ class SamplingConfig:
             flow_shift=(None if raw.get("flow_shift", None) in (None, "inherit") else float(raw["flow_shift"])),
             timesteps=timesteps,
             sigmas=sigmas,
+            sde_window_size=sde_window_size,
+            sde_window_start=sde_window_start,
+            sde_noise_scale=sde_noise_scale,
         )
 
 
@@ -87,6 +114,36 @@ class SamplingResult:
     latents: torch.Tensor
     timesteps: torch.Tensor
     sigmas: torch.Tensor
+
+
+def sde_step_mask(
+    config: SamplingConfig,
+    schedule_len: int,
+    *,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Return which denoising steps should use SDE/log-prob optimization.
+
+    MixGRPO uses stochastic sampling only inside a configured window and ODE
+    sampling outside it. Existing trajectories map naturally to all-ODE or
+    all-SDE masks so methods can share one path.
+    """
+    schedule_len = int(schedule_len)
+    if schedule_len <= 0:
+        raise ValueError("schedule_len must be positive")
+    if config.trajectory == "ode":
+        return torch.zeros(schedule_len, dtype=torch.bool, device=device)
+    if config.trajectory == "sde_reflow":
+        return torch.ones(schedule_len, dtype=torch.bool, device=device)
+
+    window_size = int(config.sde_window_size or schedule_len)
+    start = int(config.sde_window_start)
+    if start < 0 or window_size <= 0 or start + window_size > schedule_len:
+        raise ValueError("Invalid MixGRPO SDE window "
+                         f"({start} + {window_size} for schedule_len={schedule_len})")
+    mask = torch.zeros(schedule_len, dtype=torch.bool, device=device)
+    mask[start:start + window_size] = True
+    return mask
 
 
 class DiffusionSampler:
@@ -125,32 +182,12 @@ class DiffusionSampler:
 
         original_timesteps = batch.timesteps
         try:
-            if self.config.trajectory == "ode":
-                pred_clean = current
-                for timestep in timesteps:
-                    model_timestep = self._model_timestep(timestep, current)
-                    batch.timesteps = model_timestep
-                    pred_noise = model.predict_noise(
-                        current,
-                        model_timestep,
-                        batch,
-                        conditional=True,
-                        attn_kind="dense",
-                    )
-                    current = scheduler.step(
-                        pred_noise.flatten(0, 1),
-                        timestep,
-                        current.flatten(0, 1),
-                        return_dict=False,
-                    )[0].unflatten(0, pred_noise.shape[:2])
-                    pred_clean = current
-                return SamplingResult(latents=pred_clean, timesteps=timesteps, sigmas=sigmas)
-
             return SamplingResult(
-                latents=self._sample_sde_reflow(
+                latents=self._sample_trajectory(
                     model,
                     batch,
                     current,
+                    scheduler,
                     timesteps,
                     generator=generator,
                 ),
@@ -184,35 +221,56 @@ class DiffusionSampler:
         scheduler.set_timesteps(**kwargs)
         return scheduler
 
-    def _sample_sde_reflow(
+    def _sample_trajectory(
         self,
         model: ModelBase,
         batch: TrainingBatch,
         current: torch.Tensor,
+        scheduler: Any,
         timesteps: torch.Tensor,
         *,
         generator: torch.Generator | None,
     ) -> torch.Tensor:
         pred_clean = current
+        use_sde_step = sde_step_mask(self.config, len(timesteps), device=current.device)
         for step_idx, timestep in enumerate(timesteps):
             timestep_tensor = self._model_timestep(timestep, current)
             batch.timesteps = timestep_tensor
-            pred_clean = model.predict_x0(
+            if bool(use_sde_step[step_idx].item()):
+                pred_clean = model.predict_x0(
+                    current,
+                    timestep_tensor,
+                    batch,
+                    conditional=True,
+                    attn_kind="dense",
+                )
+                if step_idx < len(timesteps) - 1:
+                    next_timestep = timesteps[step_idx + 1].reshape(1).to(device=current.device)
+                    noise = torch.randn(
+                        pred_clean.shape,
+                        device=pred_clean.device,
+                        dtype=pred_clean.dtype,
+                        generator=generator,
+                    )
+                    current = model.add_noise(pred_clean, noise * self.config.sde_noise_scale, next_timestep)
+                else:
+                    current = pred_clean
+                continue
+
+            pred_noise = model.predict_noise(
                 current,
                 timestep_tensor,
                 batch,
                 conditional=True,
                 attn_kind="dense",
             )
-            if step_idx < len(timesteps) - 1:
-                next_timestep = timesteps[step_idx + 1].reshape(1).to(device=current.device)
-                noise = torch.randn(
-                    pred_clean.shape,
-                    device=pred_clean.device,
-                    dtype=pred_clean.dtype,
-                    generator=generator,
-                )
-                current = model.add_noise(pred_clean, noise, next_timestep)
+            current = scheduler.step(
+                pred_noise.flatten(0, 1),
+                timestep,
+                current.flatten(0, 1),
+                return_dict=False,
+            )[0].unflatten(0, pred_noise.shape[:2])
+            pred_clean = current
         return pred_clean
 
     @staticmethod

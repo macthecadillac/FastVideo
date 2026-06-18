@@ -1,5 +1,5 @@
-import torch
 import pytest
+import torch
 
 from fastvideo.pipelines import TrainingBatch
 from fastvideo.train.methods.rl.common import (
@@ -7,6 +7,7 @@ from fastvideo.train.methods.rl.common import (
     SamplingConfig,
     distributed_k_repeat_indices,
     media_to_video_array,
+    sde_step_mask,
     validation_caption,
     validation_shard_indices,
 )
@@ -49,16 +50,21 @@ class _FakeModel:
     def __init__(self):
         self.noise_scheduler = _FakeScheduler()
         self.add_noise_calls = 0
+        self.add_noise_inputs = []
+        self.predict_noise_calls = 0
+        self.predict_x0_calls = 0
         self.timestep_shapes = []
 
     def predict_noise(self, noisy_latents, timestep, batch, *, conditional, attn_kind):
         del conditional, attn_kind
+        self.predict_noise_calls += 1
         self.timestep_shapes.append(tuple(timestep.shape))
         assert batch.timesteps is timestep
         return torch.zeros_like(noisy_latents)
 
     def predict_x0(self, noisy_latents, timestep, batch, *, conditional, attn_kind):
         del conditional, attn_kind
+        self.predict_x0_calls += 1
         self.timestep_shapes.append(tuple(timestep.shape))
         assert batch.timesteps is timestep
         return noisy_latents
@@ -66,6 +72,7 @@ class _FakeModel:
     def add_noise(self, clean_latents, noise, timestep):
         del timestep
         self.add_noise_calls += 1
+        self.add_noise_inputs.append(noise)
         return clean_latents + noise
 
 
@@ -119,6 +126,40 @@ def test_sampling_config_rejects_unknown_keys():
         SamplingConfig.from_mapping({"solver": "dpm2"})
 
 
+def test_sampling_config_accepts_mixgrpo_window():
+    cfg = SamplingConfig.from_mapping({
+        "trajectory": "mixed_ode_sde",
+        "num_steps": 5,
+        "sde_window_start": 1,
+        "sde_window_size": 2,
+        "sde_noise_scale": 0.0,
+    })
+
+    assert cfg.trajectory == "mixed_ode_sde"
+    assert cfg.sde_window_start == 1
+    assert cfg.sde_window_size == 2
+    assert cfg.sde_noise_scale == 0.0
+    assert sde_step_mask(cfg, 5).tolist() == [False, True, True, False, False]
+
+
+def test_sampling_config_rejects_mixgrpo_window_past_schedule():
+    with pytest.raises(ValueError, match="SDE window exceeds"):
+        SamplingConfig.from_mapping({
+            "trajectory": "mixed_ode_sde",
+            "num_steps": 5,
+            "sde_window_start": 4,
+            "sde_window_size": 2,
+        })
+
+
+def test_sde_step_mask_maps_existing_trajectories():
+    ode = SamplingConfig(num_steps=3, trajectory="ode")
+    sde = SamplingConfig(num_steps=3, trajectory="sde_reflow")
+
+    assert sde_step_mask(ode, 3).tolist() == [False, False, False]
+    assert sde_step_mask(sde, 3).tolist() == [True, True, True]
+
+
 def test_sampler_restores_original_batch_timestep_after_sampling():
     model = _FakeModel()
     sampler = DiffusionSampler(SamplingConfig(num_steps=2))
@@ -148,6 +189,33 @@ def test_sde_reflow_sampler_renoises_between_steps():
     sampler.sample(model, _batch(), generator=torch.Generator().manual_seed(0))
 
     assert model.add_noise_calls == 3
+
+
+def test_sde_reflow_sampler_scales_renoise():
+    model = _FakeModel()
+    sampler = DiffusionSampler(SamplingConfig(num_steps=4, trajectory="sde_reflow", sde_noise_scale=0.0))
+
+    sampler.sample(model, _batch(), generator=torch.Generator().manual_seed(0))
+
+    assert model.add_noise_calls == 3
+    assert all(torch.count_nonzero(noise) == 0 for noise in model.add_noise_inputs)
+
+
+def test_mixed_sampler_renoises_only_configured_window():
+    model = _FakeModel()
+    sampler = DiffusionSampler(
+        SamplingConfig(
+            num_steps=4,
+            trajectory="mixed_ode_sde",
+            sde_window_start=1,
+            sde_window_size=1,
+        ))
+
+    sampler.sample(model, _batch(), generator=torch.Generator().manual_seed(0))
+
+    assert model.add_noise_calls == 1
+    assert model.predict_noise_calls == 3
+    assert model.predict_x0_calls == 1
 
 
 def test_diffusion_nft_config_uses_rl_sampler_not_dmd_pipeline():
