@@ -18,6 +18,16 @@ models:
     init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
     trainable: false
     disable_custom_init_weights: true
+  # Optional PromptRL text policy. Enable method.prompt_refinement.mode=model
+  # after adding both prompt_refiner roles.
+  # prompt_refiner:
+  #   _target_: fastvideo.train.models.prompt_refiner.CausalLMPromptRefiner
+  #   init_from: Qwen/Qwen2.5-0.5B-Instruct
+  #   trainable: true
+  # old_prompt_refiner:
+  #   _target_: fastvideo.train.models.prompt_refiner.CausalLMPromptRefiner
+  #   init_from: Qwen/Qwen2.5-0.5B-Instruct
+  #   trainable: false
 
 method:
   _target_: fastvideo.train.methods.rl.mix_grpo.MixGRPOMethod
@@ -58,6 +68,11 @@ method:
     mode: dataset_column
     refined_prompt_key: refined_prompt
     num_original_prompts: 0
+    # For trainable PromptRL prompt rewriting:
+    # mode: model
+    # num_original_prompts: 1
+  # prompt_refiner_learning_rate: 1.0e-6
+  # prompt_clip_range: 0.2
   decay_type: 1
   adv_clip_max: 5
   max_grad_norm: 1.0
