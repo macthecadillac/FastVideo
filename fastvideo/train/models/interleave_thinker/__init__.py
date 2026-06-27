@@ -21,13 +21,27 @@ from fastvideo.train.models.interleave_thinker.data import (
     resolve_interleave_image_path,
     validate_image_path,
 )
+from fastvideo.train.models.interleave_thinker.planner import (
+    INTERLEAVE_GUIDANCE_PLANNER_PROMPT,
+    INTERLEAVE_PLANNER_PROMPT,
+    InterleavePlannerOutput,
+    InterleavePlannerStep,
+    InterleaveThinkerPlannerModel,
+    extract_interleave_plan,
+)
 
 __all__ = [
+    "INTERLEAVE_GUIDANCE_PLANNER_PROMPT",
+    "INTERLEAVE_PLANNER_PROMPT",
     "DEFAULT_FILENAMES",
     "IMAGE_EXTENSIONS",
     "IMAGE_LIST_KEYS",
     "IMAGE_PATH_KEYS",
     "InterleaveDatasetKind",
+    "InterleavePlannerOutput",
+    "InterleavePlannerStep",
+    "InterleaveThinkerPlannerModel",
+    "extract_interleave_plan",
     "load_critic_rl_records",
     "load_critic_sft_records",
     "load_interleave_dataset",
