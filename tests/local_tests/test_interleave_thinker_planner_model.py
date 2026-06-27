@@ -224,3 +224,20 @@ def test_interleave_thinker_planner_config_parses_public_yaml():
     assert cfg.models["student"]["init_from"] == "InterleaveThinker/InterleaveThinker-Planner-8B"
     assert cfg.models["student"]["processor_from"] == "Qwen/Qwen3-VL-8B-Instruct"
     assert cfg.models["student"]["trainable"] is False
+
+
+def test_interleave_thinker_planner_grpo_config_parses_public_yaml():
+    cfg = load_run_config("examples/train/configs/rl/interleave_thinker/planner_grpo.yaml")
+
+    assert cfg.models["student"]["_target_"] == (
+        "fastvideo.train.models.interleave_thinker.InterleaveThinkerPlannerModel")
+    assert cfg.models["student"]["dataset_kind"] == "planner_rl"
+    assert cfg.models["student"]["lora"]["enable"] is True
+    assert cfg.models["reference"]["_target_"] == (
+        "fastvideo.train.models.interleave_thinker.InterleaveThinkerPlannerModel")
+    assert cfg.models["reference"]["trainable"] is False
+    assert cfg.method["_target_"] == "fastvideo.train.methods.rl.interleave_thinker.InterleaveThinkerRLMethod"
+    assert cfg.method["reward_scorer"]["_target_"] == (
+        "fastvideo.train.methods.rl.rewards.InterleavePlannerRewardScorer")
+    assert cfg.method["kl_coef"] == 0.01
+    assert cfg.training.data.data_path.endswith("planner_rl.jsonl")
