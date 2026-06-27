@@ -29,6 +29,11 @@ if TYPE_CHECKING:
         ClipScoreScorer,
         PickScoreScorer,
     )
+    from fastvideo.train.methods.rl.rewards.interleave_api import (
+        ConstantInterleaveEditScorer,
+        GeminiInterleaveImageScorer,
+        GeminiNanoBananaEditScorer,
+    )
     from fastvideo.train.methods.rl.rewards.media import (
         MultiRewardScorer,
         RewardScorer,
@@ -67,6 +72,22 @@ def __getattr__(name: str) -> object:
             "ClipScoreScorer": ClipScoreScorer,
             "PickScoreScorer": PickScoreScorer,
         }[name]
+    if name in {
+            "ConstantInterleaveEditScorer",
+            "GeminiInterleaveImageScorer",
+            "GeminiNanoBananaEditScorer",
+    }:
+        from fastvideo.train.methods.rl.rewards.interleave_api import (
+            ConstantInterleaveEditScorer,
+            GeminiInterleaveImageScorer,
+            GeminiNanoBananaEditScorer,
+        )
+
+        return {
+            "ConstantInterleaveEditScorer": ConstantInterleaveEditScorer,
+            "GeminiInterleaveImageScorer": GeminiInterleaveImageScorer,
+            "GeminiNanoBananaEditScorer": GeminiNanoBananaEditScorer,
+        }[name]
     if name in {"MultiRewardScorer", "RewardScorer", "select_first_frame"}:
         from fastvideo.train.methods.rl.rewards.media import (
             MultiRewardScorer,
@@ -84,7 +105,10 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "ClipScoreScorer",
+    "ConstantInterleaveEditScorer",
     "EditScoreProvider",
+    "GeminiInterleaveImageScorer",
+    "GeminiNanoBananaEditScorer",
     "InterleavePlannerRewardResult",
     "InterleavePlannerRewardScorer",
     "InterleaveThinkerAnswer",

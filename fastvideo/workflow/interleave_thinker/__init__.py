@@ -21,6 +21,14 @@ from fastvideo.workflow.interleave_thinker.orchestrator import (
     PlannerProvider,
     SinglePromptPlanner,
 )
+from fastvideo.workflow.interleave_thinker.providers import (
+    InterleaveThinkerCriticProvider,
+    InterleaveThinkerPlannerProvider,
+)
+from fastvideo.workflow.interleave_thinker.runner import (
+    InterleaveRunResult,
+    run_interleave_config,
+)
 from fastvideo.workflow.interleave_thinker.schema import (
     CriticDecision,
     CriticInput,
@@ -53,7 +61,10 @@ __all__ = [
     "InterleaveOrchestrator",
     "InterleavePlannerConfig",
     "InterleaveRunConfig",
+    "InterleaveRunResult",
     "InterleaveRunStateConfig",
+    "InterleaveThinkerCriticProvider",
+    "InterleaveThinkerPlannerProvider",
     "InterleaveTrace",
     "PlannedInterleaveStep",
     "PlannerInput",
@@ -61,6 +72,7 @@ __all__ = [
     "SinglePromptPlanner",
     "load_interleave_run_config",
     "resolve_interleave_instruction",
+    "run_interleave_config",
     "save_trace",
     "trace_to_dict",
 ]
