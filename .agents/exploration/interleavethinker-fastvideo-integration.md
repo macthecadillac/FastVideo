@@ -10,7 +10,7 @@ Current working location:
 - Directory: `/home/toolbox/FastVideo`
 - Branch: `interleavethinker`
 - Latest completed integration checkpoint:
-  `1663d06c` (`[docs]: record inference split validation`)
+  `[docs]: record inference PR commit stack`
 - Latest observed branch head before the official parity patch:
   `9363caf6` (`[docs] record InterleaveThinker workflow namespace correction`)
 
@@ -353,9 +353,20 @@ Latest cleanup validation:
     immediately after `build_from_config()` succeeds. No local pytest was run.
 - Inference PR split validation, completed 2026-06-29:
   - Branch: `macthecadillac:interleavethinker-inference`.
-  - Commit:
+  - Current PR head after review-stack rewrite:
+    `f0afb6fbd14a10f99c4d6596969e8a30f84d3dcd`
+    (`[docs]: document InterleaveThinker inference workflow`).
+  - Original single-commit validation head:
     `3e842e5eb9f78552244e404696d7fc5c5c49edab`
     (`[feat]: add InterleaveThinker inference workflow`).
+  - Both heads have identical final tree hash:
+    `c0ac4d590c1473cfae4d132a452e7c90dac85c08`. The only change after
+    Modal validation was commit-history organization.
+  - Current review stack:
+    `c2d160c5` (`[feat]: add InterleaveThinker workflow core`);
+    `9ae0ef46` (`[feat]: add InterleaveThinker run and evaluation helpers`);
+    `9d7633af` (`[test]: add InterleaveThinker inference workflow tests`);
+    `f0afb6fb` (`[docs]: document InterleaveThinker inference workflow`).
   - Base: `upstream/main` at
     `e3f54e71` (`[bugfix] Fix causal attention mask for Blackwell FP4 MMA column layout (#1506)`).
   - Contents are inference-only: `fastvideo.workflow.interleave_thinker`
@@ -425,12 +436,18 @@ Current split status:
 
 - Inference branch created, validated, and pushed:
   `macthecadillac:interleavethinker-inference` at
-  `3e842e5eb9f78552244e404696d7fc5c5c49edab`.
+  `f0afb6fbd14a10f99c4d6596969e8a30f84d3dcd`.
 - Upstream inference PR opened as a draft against `hao-ai-lab/FastVideo:main`:
   `https://github.com/hao-ai-lab/FastVideo/pull/1509`.
 - Training PR remains intentionally on hold. Do not open
   `interleavethinker-training` until the upstream inference PR is accepted and
   merged.
+- When the training PR is created, build it as a small reviewable commit stack
+  rather than a single aggregate commit. A likely split is:
+  role-model/base abstractions; Qwen3-VL planner/critic models and data
+  normalization; SFT method/configs; GRPO/reward method/configs; tests and
+  dry-run validation docs. Adjust the exact grouping to keep each commit
+  coherent and avoid mixing unrelated concerns.
 
 Inference PR contents should be self-contained against upstream `main`:
 
