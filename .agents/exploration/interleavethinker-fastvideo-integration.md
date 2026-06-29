@@ -10,7 +10,7 @@ Current working location:
 - Directory: `/home/toolbox/FastVideo`
 - Branch: `interleavethinker`
 - Latest completed integration checkpoint:
-  `53384d62` (`Merge pull request #12 from hao-ai-lab/fix/interleave-thinker-review`)
+  `a7b02998` (`[docs]: record upstream InterleaveThinker PR split`)
 - Latest observed branch head before the official parity patch:
   `9363caf6` (`[docs] record InterleaveThinker workflow namespace correction`)
 
@@ -351,6 +351,43 @@ Latest cleanup validation:
     config instantiates both student and reference checkpoints in one process.
   - No training steps were executed in these dry-runs; the entrypoint returns
     immediately after `build_from_config()` succeeds. No local pytest was run.
+- Inference PR split validation, completed 2026-06-29:
+  - Branch: `macthecadillac:interleavethinker-inference`.
+  - Commit:
+    `3e842e5eb9f78552244e404696d7fc5c5c49edab`
+    (`[feat]: add InterleaveThinker inference workflow`).
+  - Base: `upstream/main` at
+    `e3f54e71` (`[bugfix] Fix causal attention mask for Blackwell FP4 MMA column layout (#1506)`).
+  - Contents are inference-only: `fastvideo.workflow.interleave_thinker`
+    schema/orchestrator/generator/config/runner/trace/evaluation helpers,
+    fake-provider workflow tests, examples, and reviewer-facing docs. Direct
+    training-module imports and provider/model wrappers are deferred to the
+    later training PR.
+  - Local syntax/diff hygiene only:
+    `PYTHONDONTWRITEBYTECODE=1 python -m py_compile ...` passed for inference
+    files, examples, and focused tests; `git diff --check` passed. No local
+    pytest was run.
+  - Modal `pre-commit run --all-files` passed:
+    app URL `https://modal.com/apps/hao-ai-lab/main/ap-HnkA8FITHP0rYsbhay0BmP`;
+    hooks passed: yapf, ruff, codespell, PyMarkdown, actionlint, mypy,
+    filename check, and suggestion. `local_patch_applied=false`.
+  - Modal focused workflow tests passed:
+    app URL `https://modal.com/apps/hao-ai-lab/main/ap-jfTc7RVZlcs5HZDU01JDS4`;
+    command:
+    `pytest tests/local_tests/test_interleave_workflow_backend.py tests/local_tests/test_interleave_workflow_runner.py tests/local_tests/test_interleave_trace_eval.py -q`;
+    result `16 passed, 14 warnings`. `local_patch_applied=false`.
+  - Modal targeted Wan T2V SSIM regression passed on L40S with two GPUs:
+    app URL `https://modal.com/apps/hao-ai-lab/main/ap-7q2osjp7edYbjNZbEJdbfp`;
+    command:
+    `FASTVIDEO_SSIM_MODEL_ID=Wan2.1-T2V-1.3B-Diffusers pytest fastvideo/tests/ssim/test_wan_t2v_similarity.py -vs`;
+    result `2 passed, 18 warnings in 101.92s`. FLASH_ATTN mean SSIM was
+    `0.976557461420695`; TORCH_SDPA mean SSIM was `0.9821627881791857`.
+    `local_patch_applied=false`.
+  - The official `ssim_test.py::run_ssim_tests` Modal wrapper was not used
+    because no local `HF_API_KEY`, `HUGGINGFACE_HUB_TOKEN`, or `HF_TOKEN` was
+    available for its required upload path. The direct Modal pytest still ran
+    the upstream Wan T2V SSIM test and downloaded public references from
+    `FastVideo/ssim-reference-videos`.
 
 Broad-suite status:
 
@@ -377,10 +414,23 @@ Current packaging direction, set on 2026-06-29:
   upstream `main`, then open
   `macthecadillac:interleavethinker-training` against
   `hao-ai-lab/FastVideo:main`.
-- The earlier 11-PR fork-local decomposition is superseded. Close those draft
-  PRs in `macthecadillac/FastVideo`, delete their remote branches, and delete
-  matching local temporary branches. Keep the canonical `interleavethinker`
-  branch.
+- The earlier 11-PR fork-local decomposition is superseded. Those draft PRs in
+  `macthecadillac/FastVideo` have been closed where applicable; their remote
+  branches and matching local temporary branches
+  `interleavethinker-01-role-base` through
+  `interleavethinker-11-docs-examples` have been deleted. Keep the canonical
+  `interleavethinker` branch.
+
+Current split status:
+
+- Inference branch created, validated, and pushed:
+  `macthecadillac:interleavethinker-inference` at
+  `3e842e5eb9f78552244e404696d7fc5c5c49edab`.
+- Upstream inference PR should be opened as a draft against
+  `hao-ai-lab/FastVideo:main` after this handoff checkpoint is pushed.
+- Training PR remains intentionally on hold. Do not open
+  `interleavethinker-training` until the upstream inference PR is accepted and
+  merged.
 
 Inference PR contents should be self-contained against upstream `main`:
 
