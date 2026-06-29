@@ -10,7 +10,7 @@ Current working location:
 - Directory: `/home/toolbox/FastVideo`
 - Branch: `interleavethinker`
 - Latest completed integration checkpoint:
-  `[docs]: record inference PR commit stack`
+  `[docs]: record Gemini inference review fixes`
 - Latest observed branch head before the official parity patch:
   `9363caf6` (`[docs] record InterleaveThinker workflow namespace correction`)
 
@@ -353,20 +353,16 @@ Latest cleanup validation:
     immediately after `build_from_config()` succeeds. No local pytest was run.
 - Inference PR split validation, completed 2026-06-29:
   - Branch: `macthecadillac:interleavethinker-inference`.
-  - Current PR head after review-stack rewrite:
-    `f0afb6fbd14a10f99c4d6596969e8a30f84d3dcd`
+  - Current PR head after Gemini review fixes:
+    `b7fbdf286f2c51fe51053854064b14b39eba61a8`
     (`[docs]: document InterleaveThinker inference workflow`).
-  - Original single-commit validation head:
-    `3e842e5eb9f78552244e404696d7fc5c5c49edab`
-    (`[feat]: add InterleaveThinker inference workflow`).
-  - Both heads have identical final tree hash:
-    `c0ac4d590c1473cfae4d132a452e7c90dac85c08`. The only change after
-    Modal validation was commit-history organization.
+  - Current final tree hash:
+    `0579b5d344ada0068893fd5e5b236d3e1e14f301`.
   - Current review stack:
-    `c2d160c5` (`[feat]: add InterleaveThinker workflow core`);
-    `9ae0ef46` (`[feat]: add InterleaveThinker run and evaluation helpers`);
-    `9d7633af` (`[test]: add InterleaveThinker inference workflow tests`);
-    `f0afb6fb` (`[docs]: document InterleaveThinker inference workflow`).
+    `bab6adcb` (`[feat]: add InterleaveThinker workflow core`);
+    `8839334b` (`[feat]: add InterleaveThinker run and evaluation helpers`);
+    `0b6b1f49` (`[test]: add InterleaveThinker inference workflow tests`);
+    `b7fbdf28` (`[docs]: document InterleaveThinker inference workflow`).
   - Base: `upstream/main` at
     `e3f54e71` (`[bugfix] Fix causal attention mask for Blackwell FP4 MMA column layout (#1506)`).
   - Contents are inference-only: `fastvideo.workflow.interleave_thinker`
@@ -374,24 +370,32 @@ Latest cleanup validation:
     fake-provider workflow tests, examples, and reviewer-facing docs. Direct
     training-module imports and provider/model wrappers are deferred to the
     later training PR.
+  - Gemini review fixes applied:
+    - Nano Banana/Gemini client initialization now happens once before the
+      remote retry loop, so SDK/API-key setup errors fail immediately instead
+      of sleeping and retrying.
+    - `InterleaveOrchestrator` now offsets fixed generation seeds by
+      `attempt_index`, avoiding deterministic duplicate retries for rejected
+      attempts.
+    - Focused tests cover both behaviors.
   - Local syntax/diff hygiene only:
     `PYTHONDONTWRITEBYTECODE=1 python -m py_compile ...` passed for inference
-    files, examples, and focused tests; `git diff --check` passed. No local
-    pytest was run.
+    files, examples, and focused tests; `git diff --check upstream/main...HEAD`
+    passed. No local pytest was run.
   - Modal `pre-commit run --all-files` passed:
-    app URL `https://modal.com/apps/hao-ai-lab/main/ap-HnkA8FITHP0rYsbhay0BmP`;
+    app URL `https://modal.com/apps/hao-ai-lab/main/ap-4WOrN455SAKEPUCpo0rxjA`;
     hooks passed: yapf, ruff, codespell, PyMarkdown, actionlint, mypy,
     filename check, and suggestion. `local_patch_applied=false`.
   - Modal focused workflow tests passed:
-    app URL `https://modal.com/apps/hao-ai-lab/main/ap-jfTc7RVZlcs5HZDU01JDS4`;
+    app URL `https://modal.com/apps/hao-ai-lab/main/ap-ipzRSpAymYpGmWo5tvPFkd`;
     command:
     `pytest tests/local_tests/test_interleave_workflow_backend.py tests/local_tests/test_interleave_workflow_runner.py tests/local_tests/test_interleave_trace_eval.py -q`;
-    result `16 passed, 14 warnings`. `local_patch_applied=false`.
+    result `17 passed, 14 warnings in 13.76s`. `local_patch_applied=false`.
   - Modal targeted Wan T2V SSIM regression passed on L40S with two GPUs:
-    app URL `https://modal.com/apps/hao-ai-lab/main/ap-7q2osjp7edYbjNZbEJdbfp`;
+    app URL `https://modal.com/apps/hao-ai-lab/main/ap-GWCaJdx9xtL8dKVY4fA1e9`;
     command:
     `FASTVIDEO_SSIM_MODEL_ID=Wan2.1-T2V-1.3B-Diffusers pytest fastvideo/tests/ssim/test_wan_t2v_similarity.py -vs`;
-    result `2 passed, 18 warnings in 101.92s`. FLASH_ATTN mean SSIM was
+    result `2 passed, 18 warnings in 105.91s`. FLASH_ATTN mean SSIM was
     `0.976557461420695`; TORCH_SDPA mean SSIM was `0.9821627881791857`.
     `local_patch_applied=false`.
   - The official `ssim_test.py::run_ssim_tests` Modal wrapper was not used
@@ -436,7 +440,7 @@ Current split status:
 
 - Inference branch created, validated, and pushed:
   `macthecadillac:interleavethinker-inference` at
-  `f0afb6fbd14a10f99c4d6596969e8a30f84d3dcd`.
+  `b7fbdf286f2c51fe51053854064b14b39eba61a8`.
 - Upstream inference PR opened as a draft against `hao-ai-lab/FastVideo:main`:
   `https://github.com/hao-ai-lab/FastVideo/pull/1509`.
 - Training PR remains intentionally on hold. Do not open
