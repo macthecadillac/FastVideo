@@ -10,7 +10,7 @@ Current working location:
 - Directory: `/home/toolbox/FastVideo`
 - Branch: `interleavethinker`
 - Latest completed integration checkpoint:
-  `a7b02998` (`[docs]: record upstream InterleaveThinker PR split`)
+  `1663d06c` (`[docs]: record inference split validation`)
 - Latest observed branch head before the official parity patch:
   `9363caf6` (`[docs] record InterleaveThinker workflow namespace correction`)
 
@@ -426,8 +426,8 @@ Current split status:
 - Inference branch created, validated, and pushed:
   `macthecadillac:interleavethinker-inference` at
   `3e842e5eb9f78552244e404696d7fc5c5c49edab`.
-- Upstream inference PR should be opened as a draft against
-  `hao-ai-lab/FastVideo:main` after this handoff checkpoint is pushed.
+- Upstream inference PR opened as a draft against `hao-ai-lab/FastVideo:main`:
+  `https://github.com/hao-ai-lab/FastVideo/pull/1509`.
 - Training PR remains intentionally on hold. Do not open
   `interleavethinker-training` until the upstream inference PR is accepted and
   merged.
