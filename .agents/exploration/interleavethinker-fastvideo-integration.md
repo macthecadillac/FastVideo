@@ -10,7 +10,7 @@ Current working location:
 - Directory: `/home/toolbox/FastVideo`
 - Branch: `interleavethinker`
 - Latest completed integration checkpoint:
-  `7219b3b7` (`[refactor]: add non-diffusion role model base`)
+  `53384d62` (`Merge pull request #12 from hao-ai-lab/fix/interleave-thinker-review`)
 - Latest observed branch head before the official parity patch:
   `9363caf6` (`[docs] record InterleaveThinker workflow namespace correction`)
 
@@ -363,6 +363,68 @@ Broad-suite status:
   during combined suite runs. Treat focused Modal suites plus targeted API/CLI
   regressions as the current evidence until the broad-suite environment is
   repaired.
+
+## Upstream PR Split Plan
+
+Current packaging direction, set on 2026-06-29:
+
+- Split the current `interleavethinker` branch into two upstream PRs against
+  `hao-ai-lab/FastVideo:main`.
+- Open the inference PR first, from `macthecadillac:interleavethinker-inference`
+  to `hao-ai-lab/FastVideo:main`.
+- Hold the training PR until the upstream inference PR is accepted and merged.
+  After the inference PR merges, rebase/create the training branch from the new
+  upstream `main`, then open
+  `macthecadillac:interleavethinker-training` against
+  `hao-ai-lab/FastVideo:main`.
+- The earlier 11-PR fork-local decomposition is superseded. Close those draft
+  PRs in `macthecadillac/FastVideo`, delete their remote branches, and delete
+  matching local temporary branches. Keep the canonical `interleavethinker`
+  branch.
+
+Inference PR contents should be self-contained against upstream `main`:
+
+- reusable interleaved workflow/orchestration helpers under
+  `fastvideo.workflow.interleave_thinker`;
+- schema, generator backend translation, traces, prompt-set evaluation, and
+  trace reports;
+- inference/library examples and reviewer-facing docs;
+- fake-provider workflow/API tests that do not require planner/critic training
+  wrappers;
+- avoid direct imports of new training modules. Any planner/critic model
+  integration should remain protocol-based, optional, or deferred to the
+  training PR.
+
+Training PR contents are intentionally deferred until the inference PR lands:
+
+- `RoleModelBase` and builder changes for non-diffusion role actors;
+- Qwen3-VL planner/critic model wrappers and dataset normalization;
+- InterleaveThinker SFT and GRPO methods;
+- InterleaveThinker reward parsing/scoring used by training;
+- training YAML configs and training/model tests;
+- official InterleaveThinker parity and training dry-run evidence.
+
+Acceptance checklist for each upstream PR body:
+
+- [ ] `pre-commit run --all-files` passed, preferably on Modal because the
+  local environment is not authoritative for this task set.
+- [ ] Tests were added or updated for the changed behavior.
+- [ ] Documentation was updated where needed.
+- [ ] GPU memory impact was considered and documented.
+- [ ] Targeted Wan T2V SSIM regression passed on L40S, or the PR body states a
+  clear N/A rationale if the changed surface cannot affect Wan T2V inference.
+- [ ] Support matrix was updated if a new model was added, or the PR body states
+  N/A because no new FastVideo model/pipeline registry entry is added.
+
+Relevant upstream CI/merge requirements from the docs:
+
+- PR title starts with a valid bracketed type tag such as `[feat]`.
+- GitHub pre-commit check is green.
+- Buildkite Fastcheck is green.
+- Full suite is triggered before merge via `/merge`, `ready`, or maintainer
+  action and passes.
+- PR has at least one approval, is not draft at merge time, and has no
+  conflicts.
 
 ## Current Risks And Decisions
 
