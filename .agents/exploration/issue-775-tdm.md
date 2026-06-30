@@ -1,0 +1,173 @@
+# Issue 775 TDM Exploration Handoff
+
+Generated: 2026-06-30
+
+## Worktree
+
+- Branch: `issue/775-tdm`
+- Worktree: `/tmp/fastvideo-worktrees/issue-775-tdm`
+- File: `.agents/exploration/issue-775-tdm.md`
+- GitHub identity checked before reads: `gh auth status --hostname github.com`
+  reported active account `macthecadillac`.
+
+## GitHub State Checked
+
+- Issue: https://github.com/hao-ai-lab/FastVideo/issues/775
+- Title: `[Feature] TDM`
+- Author: `fenght96`
+- Created: 2025-09-01
+- Updated: 2026-05-31
+- State: open
+- Labels as of 2026-06-30: `good first issue`, `contribution-needed`, `stale`
+- Assignees: none
+
+Issue body asks whether FastVideo has a plan for TDM:
+`Learning Few-Step Diffusion Models by Trajectory Distribution Matching`
+(`arXiv:2503.06674`).
+
+Comments reviewed:
+
+- 2026-02-04: `zhisbug` said it is interesting to add and the team would
+  consider whether someone can work on it.
+- 2026-05-31: stale bot marked the issue stale because of 90 days inactivity.
+
+Open PR list was checked with `gh pr list --repo hao-ai-lab/FastVideo
+--state open --limit 100`. No open PR title/head branch obviously targets TDM
+or issue 775. Narrow searches were also run:
+
+- `gh pr list --repo hao-ai-lab/FastVideo --state all --search "TDM"` -> no PRs.
+- `gh pr list --repo hao-ai-lab/FastVideo --state all --search "775"` -> only
+  unrelated/adjacent merged PR #755 (`[Feature] Support Lora for DMD`,
+  branch `lora_distill`), which may matter if a TDM LoRA training path is
+  chosen.
+
+## External TDM Sources Read
+
+- Paper: https://arxiv.org/abs/2503.06674
+- Project page: https://tdm-t2x.github.io/
+- Official repo, read through `gh`: https://github.com/Luo-Yihong/TDM
+- Official training demo: `Luo-Yihong/TDM/train_tdm_demo.py`
+
+High-level paper/repo notes:
+
+- TDM is a data-free few-step distillation method. Training needs prompts, not
+  ground-truth images/videos.
+- The method matches distributions of generated trajectories rather than only
+  final samples. The project page describes this as score divergence over
+  student trajectories.
+- The project page also highlights TSAM, a sampling-steps-aware matching
+  objective so one student can adapt to different NFE counts.
+- Official repo is minimal: `README.md`, `requirements.txt`, `assets/`, and
+  `train_tdm_demo.py`.
+- Official released LoRAs include SD3.5, SD3, Dreamshaper, and CogVideoX-2B.
+  The README gives a CogVideoX-2B text-to-video example using 4 NFE and notes
+  the generator was trained on timesteps `[999, 856, 665, 399]`.
+- The demo script trains a trainable generator and a trainable fake-score model
+  against a frozen teacher. It alternates fake-score and generator updates,
+  builds a generated/noisy trajectory with `generate_new`, and uses helper
+  routines equivalent to `Predictor.predict`, `Predictor.add_noise`, and
+  `Predictor.obtain_mixed_noise`.
+
+## FastVideo Codebase Fit
+
+Relevant repo guidance:
+
+- New training work should go under `fastvideo/train/`, not legacy
+  `fastvideo/training/`.
+- `fastvideo/train/AGENTS.md` says new methods subclass `TrainingMethod` and
+  live under `fastvideo/train/methods/<family>/`.
+- `fastvideo/training/AGENTS.md` marks the legacy monolithic stack as
+  maintenance mode and says new training methods should not be added there.
+
+Closest existing implementation:
+
+- `fastvideo/train/methods/distribution_matching/dmd2.py`
+- `fastvideo/train/methods/distribution_matching/self_forcing.py`
+- Example configs:
+  - `examples/train/configs/distribution_matching/wan/dmd2_t2v.yaml`
+  - `examples/train/configs/distribution_matching/wan/self_forcing_causal_t2v.yaml`
+- User-facing docs:
+  - `docs/training/train_infra.md`
+
+`DMD2Method` already has important building blocks:
+
+- Role models: trainable `student`, frozen `teacher`, trainable `critic`.
+- Text-only simulation mode via `rollout_mode: simulate`.
+- Separate student and critic optimizers/schedulers.
+- Fixed denoising step lists through `method.dmd_denoising_steps`.
+- CFG teacher score support via `real_score_guidance_scale`.
+- Student rollout that creates synthetic latent trajectories from noise.
+
+Likely TDM integration shape:
+
+- Add a new method in `fastvideo/train/methods/distribution_matching/`, probably
+  `tdm.py`.
+- Consider subclassing `DMD2Method` only if the shared optimizer/role-model
+  handling stays compatible. The loss and trajectory generation are different
+  enough that a sibling `TDMMethod(TrainingMethod)` may be clearer.
+- Start with Wan 2.1 T2V 1.3B because FastVideo already has `WanModel`,
+  DMD2 configs, validation callbacks, and DMD inference pipelines.
+- First config should probably be text-only/data-free and LoRA-capable, since
+  official released TDM artifacts are LoRAs and training is prompt-only.
+
+## Main Implementation Questions
+
+1. Target model: should first support be Wan 2.1 T2V 1.3B, Wan 2.2, or just
+   import official CogVideoX-2B TDM LoRA? FastVideo does not appear to have a
+   first-class CogVideoX pipeline, so a Wan training method is the more natural
+   native contribution.
+2. Scope: method only, or also a shipped pretrained checkpoint/preset? The
+   GitHub issue asks "plan", not specifically a port of official weights.
+3. LoRA versus full fine-tune: official examples emphasize LoRA. Verify current
+   `fastvideo/train/utils/lora.py` and model role config support the desired
+   student/critic setup before implementing.
+4. Timestep schedule: official CogVideoX example uses `[999, 856, 665, 399]`;
+   FastVideo DMD2 examples use `[1000, 750, 500, 250]`. Do not assume the DMD2
+   schedule is valid for TDM quality.
+5. TSAM: decide whether first PR implements only fixed 4-step TDM or includes
+   sampling-steps-aware matching. TSAM expands config and validation surface.
+6. Validation: for a method-only PR, use small fake-model/unit tests locally in
+   code, then run real validation on Modal L40S. Do not run local tests per repo
+   rules.
+
+## Risks And Pitfalls
+
+- The official TDM demo is diffusers/accelerate image-model code with
+  DDPM-style alpha/sigma helpers. FastVideo Wan training uses flow matching
+  scheduler utilities and `[B, T, C, H, W]` latent conventions. Scheduler math
+  must be translated deliberately, not pasted.
+- Existing `DMD2Method._critic_flow_matching_loss` trains the critic against
+  `noise - generator_pred_x0`; the TDM demo trains fake score on noised
+  generated latents with mixed-noise importance weighting. Treat this as a
+  distinct objective.
+- Preserve `TrainingMethod.cuda_generator` usage for all random timesteps/noise.
+  The base method explicitly requires avoiding global RNG state.
+- Relevant lessons for future implementation:
+  - `.agents/lessons/2026-05-07_dit-dtype-boundary-with-flash-attn.md`
+  - `.agents/lessons/2026-05-07_silent-channel-major-packing-bugs.md`
+  - `.agents/lessons/2026-05-07_conversion-cast-bf16-suffix-allowlist.md`
+  These are mostly model-port lessons, but they are still relevant if TDM work
+  introduces checkpoint conversion, LoRA export, or new latent/token handling.
+
+## Suggested Next Steps
+
+1. Confirm intended scope with maintainers: "TDM training method for Wan" versus
+   "support official CogVideoX TDM LoRA" versus "documentation/plan only".
+2. If native Wan TDM is desired, prototype `TDMMethod` next to `DMD2Method`.
+   Keep it text-only first.
+3. Translate the official demo's primitives into FastVideo abstractions:
+   generated trajectory rollout, between-timestep noising, mixed-noise
+   weighting, fake-score loss, and generator cooperative target.
+4. Add a small fake-model/unit test for shape, timestep sampling, RNG
+   determinism, and optimizer cadence without loading checkpoints.
+5. Add an example config under
+   `examples/train/configs/distribution_matching/wan/`.
+6. Validate on Modal L40S through
+   `fastvideo/tests/modal/launch_l40s_job.py` from branch `interleavethinker`.
+   Do not run tests locally.
+
+## Validation Status
+
+- No code implementation was attempted in this pass.
+- No local tests were run, consistent with repo instructions.
+- This handoff is the only intended file change for the exploration branch.
