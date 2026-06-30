@@ -246,3 +246,114 @@ If the next step is `add-model-01-prep`, the workflow requires these inputs:
 6. Approval to stage clone and weights under the FastVideo repo root.
 7. Approval to install official reference dependencies into the current
    FastVideo environment for parity tests.
+
+## TDM Integration Plan From Reference Repo
+
+Generated: 2026-06-30 after user confirmed the reference implementation:
+https://github.com/Luo-Yihong/TDM
+
+Reference repo status:
+
+- Repo was re-read through `gh` as `macthecadillac`.
+- Current layout is still minimal: `README.md`, `requirements.txt`, `assets/`,
+  and `train_tdm_demo.py`.
+- The official training demo is PixArt/image-oriented diffusers+accelerate
+  code, not a FastVideo-ready video trainer.
+- The README shows pre-trained TDM LoRAs for SD3.5, SD3, Dreamshaper, and
+  CogVideoX-2B. FastVideo does not currently expose a first-class CogVideoX
+  pipeline in this branch, so importing the official CogVideoX LoRA is not the
+  most direct native integration.
+
+Recommended first PR scope:
+
+- Implement **native TDM training for Wan T2V** in the modular training stack.
+- Treat this as a training-method feature, not an `/add-model` model/component
+  port.
+- First target: Wan 2.1 T2V 1.3B, text-only/data-free, 4-step student, optional
+  LoRA on the student.
+- Defer TSAM/multi-NFE training until fixed-step TDM is validated.
+- Defer official CogVideoX LoRA import unless a CogVideoX pipeline becomes a
+  separate accepted scope.
+
+Concrete code work:
+
+1. Add `fastvideo/train/methods/distribution_matching/tdm.py`.
+   - Either subclass `DMD2Method` for role validation and optimizer plumbing, or
+     make a sibling `TDMMethod(TrainingMethod)` and copy only the shared
+     optimizer/backward cadence.
+   - Required roles should match DMD2: trainable `student`, frozen `teacher`,
+     trainable `critic`/fake-score model.
+2. Export `TDMMethod`.
+   - Update `fastvideo/train/methods/distribution_matching/__init__.py`.
+   - Update lazy exports in `fastvideo/train/methods/__init__.py` if desired for
+     consistency.
+3. Translate the official demo primitives into FastVideo model wrappers:
+   - `generate_new(...)` -> student trajectory rollout over configured
+     `tdm_denoising_steps`.
+   - `Predictor.predict(...)` -> calls to `ModelBase.predict_noise` /
+     `ModelBase.predict_x0`, preserving conditional/unconditional CFG behavior.
+   - `Predictor.add_noise(samples, noise, t1, t2)` -> a scheduler helper for
+     adding noise between two timesteps, not only from clean x0 to one timestep.
+   - `Predictor.obtain_mixed_noise(...)` -> FastVideo scheduler-space mixed
+     noise used for fake-score importance weighting.
+4. Implement TDM critic/fake-score update:
+   - Roll out the student trajectory with no grad.
+   - Sample trajectory index `k`, target timestep `t_k`, midpoint/start
+     timestep, and fake-score timestep using `TrainingMethod.cuda_generator`.
+   - Build noised generated latents via the between-timestep noise helper.
+   - Compute teacher prediction and critic prediction at the fake-score point.
+   - Match official loss shape: fake-score x0/latent MSE weighted by SNR and
+     importance ratio.
+5. Implement TDM generator update:
+   - Reuse the same trajectory/timestep sampling path.
+   - Query frozen teacher conditional/unconditional outputs and critic output.
+   - Construct the cooperative target equivalent to
+     `model_latents + (teacher - fake) + cfg_delta`.
+   - Support Huber option and normalization/weighting factor.
+6. Add config knobs under `method`, not model config:
+   - `tdm_denoising_steps` or reuse `dmd_denoising_steps`.
+   - `total_train_timesteps`.
+   - `generator_update_interval`.
+   - `real_score_guidance_scale` / `cfg`.
+   - `use_huber`, `huber_c`.
+   - `noise_interval_mode`: `separate` versus `to_terminal`.
+   - `use_randmid`.
+   - fake-score optimizer knobs matching DMD2.
+7. Add an example config:
+   - `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`
+   - Use `models.student.lora` for LoRA-first training.
+   - Use existing Wan DMD validation pipeline with explicit 4-step sampling
+     timesteps.
+8. Update docs:
+   - Add a TDM section to `docs/training/train_infra.md`.
+   - Mention that the first integration is Wan-native TDM, not the official
+     CogVideoX LoRA inference artifact.
+
+Testing/validation plan:
+
+- Add lightweight unit tests that do not load Wan weights:
+  - config parsing/build target for `TDMMethod`;
+  - timestep/trajectory sampling determinism through `cuda_generator`;
+  - between-timestep noise helper shape and finite values using a fake scheduler;
+  - optimizer cadence: critic every step, student according to
+    `generator_update_interval`;
+  - loss-map keys and backward routing with fake role models.
+- Add/extend Modal validation:
+  - dry-run config build on L40S;
+  - short Wan TDM smoke on L40S using a tiny prompt set;
+  - compare validation samples/loss curves against DMD2 baseline enough to catch
+    obvious divergence.
+- Do not claim quality parity from unit tests. A real Modal run is required for
+  this method.
+
+Main risks:
+
+- The official script uses DDPM alpha/sigma helpers. Wan uses flow matching
+  scheduler conventions, so the between-timestep noising and mixed-noise math
+  must be rederived against `WanModel.noise_scheduler` instead of copied.
+- The official video evidence is CogVideoX LoRA inference, not a full video
+  training reference. Wan TDM is an adaptation of the algorithm, not a
+  checkpoint-level port.
+- TDM is more memory-expensive than DMD2 because each step may need student,
+  teacher, and critic predictions on generated trajectory points. Start with
+  LoRA and small validation cadence.
