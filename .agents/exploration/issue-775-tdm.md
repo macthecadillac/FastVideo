@@ -171,3 +171,78 @@ Likely TDM integration shape:
 - No code implementation was attempted in this pass.
 - No local tests were run, consistent with repo instructions.
 - This handoff is the only intended file change for the exploration branch.
+
+## Add-Model Skill Phase 0 Gate
+
+Generated: 2026-06-30 after explicit `/add-model` invocation.
+
+Skill resources read:
+
+- `.agents/skills/add-model/SKILL.md`
+- `.agents/skills/add-model/shared/common_rules.md`
+- `.agents/skills/add-model/contracts/prep_handoff.md`
+- `.agents/skills/add-model/contracts/port_state.md`
+- `.agents/skills/add-model/contracts/escape_hatch.md`
+- `.agents/skills/add-model/contracts/component_context.md`
+- `.agents/skills/add-model/contracts/parity_status.md`
+- `.agents/skills/add-model/contracts/conversion_request.md`
+- `.agents/skills/add-model/contracts/conversion_handoff.md`
+- `.agents/skills/add-model/contracts/component_skill_handoff.md`
+- `.agents/skills/add-model/contracts/pipeline_context.md`
+- `.agents/skills/add-model/contracts/pipeline_handoff.md`
+- `.agents/skills/add-model/contracts/final_handoff.md`
+- `.agents/skills/add-model-01-prep/SKILL.md`
+
+Live GitHub state was re-checked with `gh` as `macthecadillac`:
+
+- `gh auth status --hostname github.com` reported active account
+  `macthecadillac`.
+- `gh issue view 775 --repo hao-ai-lab/FastVideo --comments ...` showed no new
+  comments since the stale bot comment on 2026-05-31.
+- `gh pr list --repo hao-ai-lab/FastVideo --state open --limit 100 ...` showed
+  no active PR that directly targets TDM or issue 775.
+
+Phase 0 result: **blocked before model/component work**.
+
+Reasons:
+
+1. This file is an exploration handoff, not an `add-model-01-prep` handoff and
+   not an equivalent match for `contracts/prep_handoff.md`.
+2. Required prep fields are missing or unresolved:
+   `model_family`, `workload_types`, `official_ref_dir`,
+   `official_ref_commit`, `hf_weights_path`, `hf_revision`,
+   `local_weights_dir`, `source_layout`, `model_index_class`,
+   `components_seen`, `needs_conversion`, `hf_token_env`,
+   `dependency_changes`, `official_env_status`, `local_tests_readme`,
+   `port_state_file`, `gitignore_entries_added`, `next_step`, and
+   `escape_hatch`.
+3. Required shared state files do not exist yet:
+   `tests/local_tests/<model_family>/README.md` and
+   `tests/local_tests/<model_family>/PORT_STATUS.md`.
+4. Scope does not yet match the `add-model` skill's two supported shapes. The
+   issue asks for TDM, which is a training/distillation method. It is not yet
+   scoped as either a full model family/variant port or a first-class reusable
+   component contribution.
+5. The official TDM sources expose multiple possible directions: native Wan TDM
+   training, official CogVideoX-2B LoRA support, SD3/SD3.5 image LoRA support,
+   or planning/docs only. The first-PR variant and modality axes are therefore
+   not locked.
+
+Required next decision before any `/add-model` implementation phase:
+
+- Either reroute this as a training-method feature outside `/add-model`, likely
+  under `fastvideo/train/methods/distribution_matching/`, or provide the inputs
+  needed to run `add-model-01-prep` for a concrete model/component scope.
+
+If the next step is `add-model-01-prep`, the workflow requires these inputs:
+
+1. Official reference repo or Diffusers pipeline URL.
+2. HF repo id or local weights path, and whether it has a root
+   `model_index.json`.
+3. Target `model_family`.
+4. Workload types.
+5. Which token env var is exported: `HF_TOKEN`, `HUGGINGFACE_HUB_TOKEN`, or
+   `HF_API_KEY` (env var name only, no token value).
+6. Approval to stage clone and weights under the FastVideo repo root.
+7. Approval to install official reference dependencies into the current
+   FastVideo environment for parity tests.
