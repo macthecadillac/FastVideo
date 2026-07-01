@@ -745,6 +745,7 @@ Scope implemented:
 - Added local tests and reviewer README:
   - `tests/local_tests/tdm/README.md`
   - `tests/local_tests/tdm/__init__.py`
+  - `tests/local_tests/tdm/test_tdm_config_smoke.py`
   - `tests/local_tests/tdm/test_tdm_scheduler_math.py`
   - `tests/local_tests/tdm/test_tdm_method_unit.py`
 - Updated `docs/training/train_infra.md` with TDM roles, config keys, and the
@@ -891,6 +892,18 @@ tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_raises_fo
 tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_effective_noise_and_snr_match_wan_parameterization PASSED
 5 passed, 14 warnings in 16.94s
 ```
+
+Follow-up smoke-test addition:
+
+- Added `tests/local_tests/tdm/test_tdm_config_smoke.py` to parse
+  `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`,
+  resolve `TDMMethod`, check required roles and LoRA knobs, and exercise a tiny
+  flow bridge transition without loading Wan weights.
+- Local compile check passed:
+
+  ```text
+  python -m py_compile tests/local_tests/tdm/test_tdm_config_smoke.py
+  ```
 
 Known remaining work:
 

@@ -56,6 +56,7 @@ pytest tests/local_tests/tdm/ -v -s
 
 | Area | Test | Concern | Status |
 |---|---|---|---|
+| Config smoke | `test_tdm_config_smoke.py` | Example YAML parses, resolves `TDMMethod`, and declares expected roles/LoRA knobs without loading weights | added, not run on Modal yet |
 | Flow bridge | `test_tdm_scheduler_math.py` | Mixed-noise transition reconstructs Wan flow noising; invalid direction raises | added, not run locally |
 | Method wiring | `test_tdm_method_unit.py` | Fake models exercise loss keys and student/critic backward routing | added, not run locally |
 
