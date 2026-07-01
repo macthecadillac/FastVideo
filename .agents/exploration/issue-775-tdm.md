@@ -1264,7 +1264,7 @@ Small training test execution status:
 
 Known remaining work:
 
-- Current TODO order:
+- TODO order captured before the diagnostic pass:
   1. Investigate why `fake_score_loss` is exactly `0.0` on several short-run
      steps. Add diagnostics for fake-score weighting/sampling:
      `sigma_from`, `sigma_to`, SNR weight, importance weight stats,
@@ -1282,9 +1282,126 @@ Known remaining work:
      and evaluate a useful distilled adapter, and compare 4-step Wan output
      against DMD or Self-Forcing baselines.
 
-- Investigate whether `fake_score_loss == 0.0` on many short-run steps is
-  expected from the current weighting/sampling path or indicates an objective
-  issue that longer tests would expose.
+Updated remaining work after executing item 1:
+
+- Decide and implement the fake-score terminal-sigma fix. The diagnostic run
+  below found that the zero losses are caused by sampling `sigma_to=1.0`,
+  which drives flow SNR weighting to zero.
 - Decide whether `enable_gradient_in_rollout` should remain default `false` or
   switch to `true` after memory and behavior are observed.
 - Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
+
+Fake-score zero-loss diagnostic execution:
+
+- Added per-step TDM fake-score diagnostics to `TDMMethod`:
+  `sigma_from`, `sigma_to`, `timestep_from`, `timestep_to`,
+  `trajectory_index_from`, `trajectory_index_to`, `sigma_to_is_terminal`,
+  SNR, SNR weight, importance min/mean/max, final weight min/mean/max,
+  per-sample loss min/mean/max, mixed/proposal noise-square means, and
+  transition beta mean.
+- Added test coverage in
+  `tests/local_tests/tdm/test_tdm_method_unit.py` to assert the diagnostic
+  metric keys are emitted.
+- Checks before Modal:
+
+  ```text
+  python -m py_compile fastvideo/train/methods/distribution_matching/tdm.py \
+    tests/local_tests/tdm/test_tdm_method_unit.py
+
+  uvx pre-commit run --files fastvideo/train/methods/distribution_matching/tdm.py \
+    tests/local_tests/tdm/test_tdm_method_unit.py \
+    .agents/exploration/issue-775-tdm.md
+  ```
+
+  Result: `yapf`, `ruff`, `codespell`, filename checks, and suggestion hooks
+  passed. The `mypy` hook hit the known hyphenated worktree package-name error.
+  Direct mypy passed:
+
+  ```text
+  uvx mypy --python-version 3.10 --follow-imports skip \
+    --disable-error-code union-attr --disable-error-code override \
+    --explicit-package-bases fastvideo/train/methods/distribution_matching/tdm.py
+  ```
+
+- Modal L40S unit/smoke tests passed on diagnostic commit
+  `7cd9c672266359f17e3fab233e87da5a8733d791`:
+
+  ```text
+  Modal app: ap-nN9qJIJalVNY4Mx79kfd9x
+  pytest tests/local_tests/tdm/ -v -s
+  8 passed, 14 warnings in 24.01s
+  ```
+
+- Modal 20-step fake-score diagnostic run passed:
+
+  ```text
+  Modal app: ap-3MkmKier7B447hqDA623SB
+  Output root: /root/data/tdm_diag_fake_score_20_7cd9c672
+  Command: torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+    --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+    --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+    --training.loop.max_train_steps 20 \
+    --training.checkpoint.training_state_checkpointing_steps 0 \
+    --training.checkpoint.output_dir /root/data/tdm_diag_fake_score_20_7cd9c672 \
+    --training.tracker.trackers [jsonl] \
+    --training.tracker.run_name tdm_diag_fake_score_20 \
+    --callbacks.validation.every_steps 0
+  Result: Training completed, commit_volume=True, exit code 0.
+  ```
+
+Diagnostic finding:
+
+- The zero `fake_score_loss` steps were exactly the steps where the sampled
+  fake-score target was the terminal/max-noise point:
+
+  ```text
+  zero_steps: [2, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 18]
+  zero_terminal_steps: [2, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 18]
+  zero_snr_weight_steps: [2, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 18]
+  zero_weight_steps: [2, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 18]
+  nonzero_terminal_steps: []
+  nonfinite: []
+  ```
+
+- Example zero step:
+
+  ```text
+  step=2
+  from_idx=3, to_idx=0
+  sigma_from=0.25, sigma_to=1.0
+  per_sample_loss_mean=0.1114982888
+  snr_weight=0.0
+  weight_mean=0.0
+  fake_score_loss=0.0
+  ```
+
+- Example nonzero step:
+
+  ```text
+  step=4
+  from_idx=3, to_idx=2
+  sigma_from=0.25, sigma_to=0.5
+  per_sample_loss_mean=0.0007316071
+  snr_weight=1.0
+  weight_mean=1.0001653433
+  fake_score_loss=0.0007317280
+  ```
+
+Interpretation:
+
+- The critic's unweighted per-sample loss was nonzero on the zero-loss steps.
+  The loss became zero because `sigma_to=1.0` makes the flow SNR
+  `((1 - sigma) / sigma)^2` equal zero, which makes `snr_weight=0.0` and the
+  final fake-score weight zero.
+- This is therefore not a NaN/Inf, optimizer, or critic-output failure. It is a
+  sampling/weighting interaction caused by allowing terminal sigma as a
+  fake-score target under `noise_interval_mode: separate`.
+
+Likely next fix to evaluate:
+
+- For `noise_interval_mode: separate`, exclude the max-sigma terminal point
+  from `to_idx` candidates so fake-score training samples strictly interior
+  noising intervals.
+- Keep terminal noising as an explicit behavior only under
+  `noise_interval_mode: to_terminal`, or define a separate terminal weighting
+  rule if terminal transitions are desired.
