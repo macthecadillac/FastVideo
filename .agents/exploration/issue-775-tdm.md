@@ -1693,10 +1693,142 @@ Result:
 10 passed, 14 warnings in 19.47s
 ```
 
-Current remaining TODO order:
+Remaining TODO order before this diagnostic:
 
 1. Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
 2. Longer-term goals: validate TDM convergence, check whether the flow-matching
+   bridge behaves well in output quality, train and evaluate a useful
+   distilled adapter, and compare 4-step Wan output against DMD or
+   Self-Forcing baselines.
+
+## SDE Versus ODE Rollout Diagnostic
+
+Generated: 2026-07-01 after running the requested ODE comparison.
+
+Live GitHub state was re-checked before the run:
+
+- `gh auth status` reported active account `macthecadillac`.
+- Issue 775 is still open, assigned to `macthecadillac`, and has no new
+  comments since 2026-05-31.
+- The open PR list still has no active PR directly targeting TDM or issue 775.
+
+ODE diagnostic command:
+
+```text
+Modal app: ap-x6X9P0DJPpdV5LB5LIygWM
+Output root: /root/data/tdm_diag_ode_20_b55aeb32
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 4 \
+  --install-extra test \
+  --commit-volume \
+  --git-commit b55aeb325dc20334afcb06ccd9dd23075a194cc9 \
+  --command "torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+    --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+    --method.student_sample_type ode \
+    --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+    --training.loop.max_train_steps 20 \
+    --training.checkpoint.training_state_checkpointing_steps 0 \
+    --training.checkpoint.output_dir /root/data/tdm_diag_ode_20_b55aeb32 \
+    --training.tracker.trackers [jsonl] \
+    --training.tracker.run_name tdm_diag_ode_20 \
+    --callbacks.validation.every_steps 0"
+```
+
+Result: training completed, commit_volume=True, exit code 0.
+
+Downloaded metrics:
+
+```text
+modal volume get hf-model-weights \
+  tdm_diag_ode_20_b55aeb32/tracker/metrics.jsonl \
+  /tmp/tdm_diag_ode_20_b55aeb32_metrics.jsonl --force
+```
+
+SDE baseline for comparison:
+
+- Modal app: `ap-C7T7LCY4j0iGdCUigW85XX`
+- Output root: `/root/data/tdm_diag_fake_score_fix_20_ca654254`
+- Metrics file:
+  `/tmp/tdm_diag_fake_score_fix_20_ca654254_metrics.jsonl`
+- This SDE baseline was run before the rollout-gradient option removal, but
+  that removal does not change SDE behavior because the removed config value
+  was `false` and the code path remains final-prediction-only.
+
+Shared sanity checks:
+
+```text
+SDE:
+loss_step_count: 20
+update_steps: [5, 10, 15, 20]
+zero_fake_score_steps: []
+terminal_steps: []
+zero_snr_weight_steps: []
+zero_weight_steps: []
+nonfinite: []
+sigma_from_values: [0.25, 0.5]
+sigma_to_values: [0.5, 0.75]
+
+ODE:
+loss_step_count: 20
+update_steps: [5, 10, 15, 20]
+zero_fake_score_steps: []
+terminal_steps: []
+zero_snr_weight_steps: []
+zero_weight_steps: []
+nonfinite: []
+sigma_from_values: [0.25, 0.5]
+sigma_to_values: [0.5, 0.75]
+```
+
+Parsed metric comparison:
+
+```text
+SDE total_loss: min=0.0005264004576, mean=0.07027297739, max=0.4766705632, first=0.001611057436, last=0.3495902717
+ODE total_loss: min=0.001026136917, mean=0.06532820691, max=0.4892946482, first=0.001152216806, last=0.4892946482
+
+SDE fake_score_loss: min=0.0005264004576, mean=0.00133647426, max=0.001750704367, first=0.001611057436, last=0.001354351174
+ODE fake_score_loss: min=0.001026136917, mean=0.001738114731, max=0.002531493315, first=0.001152216806, last=0.002267815406
+
+SDE generator_loss: min=0, mean=0.06893650442, max=0.474952668, first=0, last=0.348235935
+ODE generator_loss: min=0, mean=0.06359009296, max=0.4870268404, first=0, last=0.4870268404
+
+SDE per_sample_loss_mean: min=0.0005265791551, mean=0.00133637641, max=0.001751774456
+ODE per_sample_loss_mean: min=0.0010230107, mean=0.001734799595, max=0.002532084472
+
+SDE snr_weight: min=1, mean=1, max=1
+ODE snr_weight: min=1, mean=1, max=1
+
+SDE weight_mean: min=0.9993470907, mean=1.000157794, max=1.002144217
+ODE weight_mean: min=0.9995772839, mean=1.002171564, max=1.003748775
+
+SDE step_time_sec: min=20.59477956, mean=27.32687902, max=48.55012608
+ODE step_time_sec: min=17.47801035, mean=22.71334869, max=39.83637653
+```
+
+Interpretation:
+
+- ODE passed the same 20-step real-Wan sanity bar as SDE:
+  finite losses, correct generator update cadence, no terminal-sigma targets,
+  no zero fake-score weights, and no nonfinite metrics.
+- ODE was faster in this run: mean step time `22.71s` versus SDE `27.33s`.
+- ODE fake-score losses were somewhat higher in this short run, while total
+  and generator mean losses were comparable. This is not enough to claim one
+  produces better distilled samples.
+- This comparison is a training-health diagnostic only. It does not prove
+  convergence, quality, or prompt alignment.
+
+Decision for the first config:
+
+- Keep `student_sample_type: sde` as the default for now.
+- Rationale: SDE is closer to the upstream TDM reference rollout style, which
+  re-noises each predicted clean latent with the model-predicted noise at the
+  next timestep. ODE is viable as a supported alternative and may be faster,
+  but it needs qualitative or longer-run evidence before becoming the default.
+
+Current remaining TODO order:
+
+1. Longer-term goals: validate TDM convergence, check whether the flow-matching
    bridge behaves well in output quality, train and evaluate a useful
    distilled adapter, and compare 4-step Wan output against DMD or
    Self-Forcing baselines.
