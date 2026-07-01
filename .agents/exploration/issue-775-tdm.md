@@ -590,3 +590,141 @@ Follow Flux2's evidence standard:
 - Handoff/README explicitly says this is a Wan adaptation of TDM, not an exact
   CogVideoX checkpoint port.
 - Pre-commit is run on changed files before committing.
+
+## Diffusion-To-Flow Bridge Proposal
+
+Generated: 2026-07-01 in response to the explicit concern that the original
+TDM paper/demo targets diffusion/CogVideoX-2B while FastVideo's first target is
+Wan flow matching.
+
+Position:
+
+- Treat this as an algorithm port, not as a checkpoint/model port.
+- Preserve TDM's role structure and training objective:
+  - few-step generator/student trajectory;
+  - fake-score/critic learning from generated samples;
+  - teacher real-score guidance;
+  - cooperative target
+    `x0_student + (x0_teacher_cond - x0_fake) + cfg_delta`.
+- Replace only the stochastic-process parameterization:
+  - TDM reference uses diffusion alpha/sigma or alpha-bar formulas.
+  - Wan uses flow matching with
+    `x_sigma = (1 - sigma) * x0 + sigma * eps`.
+
+FastVideo grounding:
+
+- `FlowMatchEulerDiscreteScheduler.add_noise(...)` implements
+  `x_sigma = sigma * noise + (1 - sigma) * sample`.
+- Wan training batch construction uses the same formula for noisy model input.
+- FastVideo's clean-latent conversion for flow models uses
+  `pred_x0 = x_sigma - sigma * pred_noise`.
+- Self-Forcing already demonstrates that an iterative Wan rollout can carry the
+  current effective noise forward via:
+  `eps = (x_sigma - (1 - sigma) * pred_x0) / sigma`, then
+  `x_next = (1 - sigma_next) * pred_x0 + sigma_next * eps`.
+
+Bridge design:
+
+1. Use sigma as the single time coordinate.
+   - Convert sampled timesteps to scheduler sigmas.
+   - Avoid alpha-bar math in production TDM code.
+   - Only keep reference alpha/sigma math in optional tiny-tensor tests.
+2. Define the forward/noising family for Wan TDM as:
+
+   ```text
+   q_sigma(x | x0, eps) = (1 - sigma) * x0 + sigma * eps
+   ```
+
+3. Use Wan-native clean prediction everywhere:
+
+   ```text
+   x0_hat(model, x_sigma, sigma) = x_sigma - sigma * model_output
+   ```
+
+   where `model_output` is the Wan velocity/noise-style output already consumed
+   by FastVideo's `pred_noise_to_pred_video`.
+
+4. For ordinary noising from clean latents, call the model wrapper's existing
+   `add_noise(clean_latents, noise, timestep)` so shapes and sequence-parallel
+   flattening stay consistent with Wan.
+
+5. For TDM's key intermediate-to-later noising step, do not call a DDPM
+   scheduler. Derive the equivalent flow transition.
+
+   Given an existing point:
+
+   ```text
+   x_s1 = (1 - s1) * x0 + s1 * eps_model
+   ```
+
+   choose a later/noisier point `s2 >= s1` and fresh independent noise
+   `eps_rand`. Reuse as much of the existing noise component as possible:
+
+   ```text
+   a = (1 - s2) / (1 - s1)
+   beta_sq = s2^2 - (a * s1)^2
+   beta = sqrt(beta_sq)
+   x_s2 = a * x_s1 + beta * eps_rand
+   mixed_eps = (a * s1 * eps_model + beta * eps_rand) / s2
+   ```
+
+   This guarantees:
+
+   ```text
+   x_s2 = (1 - s2) * x0 + s2 * mixed_eps
+   ```
+
+   and gives the fake-score loss the effective mixed noise required for TDM's
+   importance weighting.
+
+6. Guard the transition aggressively:
+   - sample only `s2 >= s1`;
+   - error on meaningfully negative `beta_sq`;
+   - clamp `beta_sq` only for tiny floating-point negatives;
+   - handle `sigma == 0` terminal cases separately, never by divide-by-zero.
+
+7. Keep the sampler direction clear:
+   - inference denoising moves from high sigma to low sigma;
+   - TDM's fake-score noising step moves from a generated intermediate point to
+     an equal-or-higher sigma point for critic training.
+   - Name helper args `sigma_from` and `sigma_to` instead of `t1`/`t2` to avoid
+     DDPM timestep ambiguity.
+
+8. Use the same denoising grid as Wan inference for the first PR.
+   - Start with a fixed four-step schedule to match the reference's few-step
+     setting.
+   - Later allow explicit `method.tdm.sigmas` or `method.tdm.timesteps` once the
+     baseline works.
+
+Validation plan for the bridge:
+
+1. CPU math tests:
+   - construct tiny `x0`, `eps_model`, `eps_rand`, `s1`, `s2`;
+   - build `x_s1`;
+   - compute `x_s2` and `mixed_eps`;
+   - assert reconstruction equality:
+     `x_s2 == (1 - s2) * x0 + s2 * mixed_eps`.
+2. Wan-shape tests:
+   - repeat the same checks on `[B, T, C, H, W]`;
+   - verify flatten/unflatten behavior matches Wan wrappers.
+3. Direction tests:
+   - `s2 < s1` raises;
+   - `s2 == s1` reconstructs with `beta == 0` up to tolerance;
+   - terminal `s1 == 0` and high-sigma cases are finite.
+4. Method tests:
+   - fake models return deterministic outputs;
+   - TDM fake-score loss uses `mixed_eps`;
+   - generator loss uses Wan-native `x0_hat` predictions for student, teacher,
+     and critic.
+5. Modal smoke:
+   - first target is "stable and finite" training on Wan, not quality parity
+     with CogVideoX;
+   - record loss keys and no-NaN evidence before any quality claim.
+
+Open research risk:
+
+- TDM's paper-level derivation is tied to diffusion notation, but the core
+  distribution-matching idea only needs a valid forward corruption family and a
+  model-to-clean conversion. The Wan bridge is mathematically consistent for
+  the linear flow noising family, but empirical behavior is not guaranteed until
+  Modal training smoke and qualitative probes are run.
