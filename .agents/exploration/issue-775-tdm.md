@@ -930,10 +930,92 @@ Follow-up smoke-test addition:
   7 passed, 14 warnings in 16.74s
   ```
 
+Modal Wan smoke feasibility check:
+
+- Wan weights were confirmed present in the Modal `hf-model-weights` volume:
+  `/root/data/.cache/hub/models--Wan-AI--Wan2.1-T2V-1.3B-Diffusers/snapshots/0fad780a534b6463e45facd96134c9f345acfa5b`.
+- The expected repo-local `data/Wan-Syn_77x448x832_600k` dataset was not
+  present on Modal.
+- A small preprocessed T2V dataset was available on Hugging Face as
+  `wlsaidhi/crush-smol_processed_t2v`. It was downloaded and committed to the
+  Modal volume for smoke tests.
+- Persisted Modal training data path:
+  `/root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset`.
+- Dataset snapshot contains 4 parquet shards under `combined_parquet_dataset`
+  and initialized as 32 rows, 8 rows per SP group in the 4-GPU smoke.
+
+Modal dry-run with actual Wan components passed:
+
+```text
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 4 \
+  --install-extra test \
+  --git-commit 0bf0a9736a1aaaf1e067a83f5cc7d97c9e26bf30 \
+  --command "torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+    --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+    --dry-run \
+    --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+    --training.loop.max_train_steps 1 \
+    --training.checkpoint.training_state_checkpointing_steps 0 \
+    --training.checkpoint.output_dir /root/data/tdm_smoke_dry_run"
+```
+
+Result:
+
+```text
+Modal app: ap-rLvK7xTeWxsRRg9KlbevK0
+Exit code: 0
+Dry-run reached build_from_config and completed.
+```
+
+Modal one-step Wan TDM training smoke passed:
+
+```text
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 4 \
+  --install-extra test \
+  --git-commit 0bf0a9736a1aaaf1e067a83f5cc7d97c9e26bf30 \
+  --command "torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+    --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+    --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+    --training.loop.max_train_steps 1 \
+    --training.checkpoint.training_state_checkpointing_steps 0 \
+    --training.tracker.trackers [none] \
+    --callbacks.validation.every_steps 0"
+```
+
+Result:
+
+```text
+Modal app: ap-5pma61ROGfGrw0nwTfyKi7
+Loaded Wan student, teacher, and critic transformer roles from the Modal cache.
+Enabled LoRA training with rank=16 alpha=32 on 240 layers for student/critic.
+Initialized LatentsParquetMapStyleDataset from the staged crush-smol snapshot.
+Validation callback was instantiated with every_steps=0.
+EMA callback initialized and updated at iteration 1.
+Steps: 100% complete, 1/1 [00:33<00:00, 33.57s/it]
+INFO 07-01 08:26:34.271 [train.py:135] Training completed
+Completed L40S job ...
+Exit code: 0
+```
+
+Notes:
+
+- This confirms the stronger smoke is possible on Modal with 4x L40S, actual
+  Wan weights, staged preprocessed data, distributed setup, real forward /
+  backward / optimizer stepping, and EMA update.
+- FlashAttention was unavailable in the image, so the run fell back to Torch
+  SDPA. The one-step smoke still completed.
+- The trainer does not print metric/loss values when `trackers: [none]` is
+  used, so this run confirms the path completes but does not independently log
+  finite loss scalars from the real Wan step.
+- Non-fatal warnings were emitted at process exit because
+  `destroy_process_group()` is not called before `torchrun` exits.
+
 Known remaining work:
 
-- Run a very short Wan TDM training smoke with
-  `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`.
 - Inspect loss keys and confirm no NaNs.
 - Decide whether `enable_gradient_in_rollout` should remain default `false` or
   switch to `true` after memory and behavior are observed.
