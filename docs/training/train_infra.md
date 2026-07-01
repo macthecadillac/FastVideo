@@ -360,7 +360,9 @@ method:
 
 See `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml` for a
 complete Wan LoRA config. Treat this as a Wan adaptation of TDM, not exact
-CogVideoX reference parity.
+CogVideoX reference parity. TDM follows the reference implementation's rollout
+gradient behavior: generated rollout history is not backpropagated through, and
+only the student prediction used by the generator loss carries gradients.
 
 ### Self-Forcing (Causal DMD)
 

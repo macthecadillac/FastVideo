@@ -194,12 +194,6 @@ class TDMMethod(DMD2Method):
             default="separate",
             where="method.noise_interval_mode",
         )  # type: ignore[assignment]
-        self._enable_gradient_in_rollout = require_bool(
-            mcfg,
-            "enable_gradient_in_rollout",
-            default=False,
-            where="method.enable_gradient_in_rollout",
-        )
         self._use_randmid = require_bool(
             mcfg,
             "use_randmid",
@@ -388,7 +382,7 @@ class TDMMethod(DMD2Method):
 
         for step_idx, timestep_scalar in enumerate(step_list):
             timestep = timestep_scalar.reshape(1)
-            enable_grad = with_grad and (self._enable_gradient_in_rollout or step_idx == len(step_list) - 1)
+            enable_grad = with_grad and step_idx == len(step_list) - 1
             with torch.set_grad_enabled(enable_grad):
                 pred_x0 = self.student.predict_x0(
                     current_noisy,

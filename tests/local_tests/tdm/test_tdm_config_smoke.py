@@ -33,6 +33,7 @@ def test_tdm_wan_lora_config_resolves_without_loading_weights() -> None:
     assert cfg.method["tdm_denoising_steps"] == [1000, 750, 500, 250]
     assert cfg.method["noise_interval_mode"] == "separate"
     assert cfg.method["student_sample_type"] == "sde"
+    assert "enable_gradient_in_rollout" not in cfg.method
     assert cfg.training.pipeline_config is not None
     assert getattr(cfg.training.pipeline_config, "flow_shift") == 8
 

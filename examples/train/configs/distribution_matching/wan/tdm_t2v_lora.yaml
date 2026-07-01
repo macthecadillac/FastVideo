@@ -51,9 +51,10 @@ method:
   warp_denoising_step: false
 
   # Student rollout. "sde" re-noises each predicted x0; "ode" carries the
-  # effective Wan flow noise across denoising steps.
+  # effective Wan flow noise across denoising steps. Like the reference TDM
+  # implementation, rollout history is generated without backpropagation; only
+  # the final student prediction used by generator loss carries gradients.
   student_sample_type: sde
-  enable_gradient_in_rollout: false
 
   # Fake-score noising bridge. The implementation samples a generated
   # trajectory point and moves it to a strictly larger sigma with the
