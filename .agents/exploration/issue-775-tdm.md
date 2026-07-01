@@ -1577,10 +1577,126 @@ Interpretation:
 
 Remaining TODO order after this fix:
 
-1. Decide whether `enable_gradient_in_rollout` should remain default `false`
-   or switch to `true` after memory and behavior are observed.
+1. Remove the TDM-only `enable_gradient_in_rollout` option after confirming
+   the reference implementation does not train through the full generated
+   rollout.
 2. Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
 3. Longer-term goals: validate TDM convergence, check whether the flow-matching
+   bridge behaves well in output quality, train and evaluate a useful
+   distilled adapter, and compare 4-step Wan output against DMD or
+   Self-Forcing baselines.
+
+## Rollout-Gradient Option Removal
+
+Generated: 2026-07-01 after checking the upstream TDM reference and removing
+the TDM-specific rollout-gradient knob.
+
+Reference check:
+
+- Read `Luo-Yihong/TDM/train_tdm_demo.py` through `gh api` after verifying
+  `gh` identity as `macthecadillac`.
+- The upstream script builds the multi-step generated trajectory with
+  `generate_new(...)` under `torch.no_grad()`.
+- During the generator update, it samples a point from that no-grad trajectory
+  and recomputes one student prediction for the generator loss.
+- There is no upstream equivalent of a user-facing full-rollout gradient
+  option.
+
+Decision:
+
+- Remove `method.enable_gradient_in_rollout` from TDM.
+- Keep reference-style behavior unconditional:
+  generated rollout history is not backpropagated through, and only the final
+  student prediction used by generator loss carries gradients.
+- Do not touch Self-Forcing's `enable_gradient_in_rollout`; that is an existing
+  separate method feature outside issue 775's TDM scope.
+
+Code change:
+
+- Commit: `1afc867c8b42f138d9fbc6535e3f1c854224f9ea`
+  (`[fix]: remove TDM rollout gradient option`)
+- Branch pushed: `origin/issue/775-tdm`
+- Files changed:
+  - `fastvideo/train/methods/distribution_matching/tdm.py`
+  - `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`
+  - `tests/local_tests/tdm/test_tdm_config_smoke.py`
+  - `docs/training/train_infra.md`
+
+Implementation details:
+
+- Removed TDM parsing for `enable_gradient_in_rollout`.
+- `_student_trajectory(..., with_grad=True)` now uses:
+
+  ```text
+  enable_grad = with_grad and step_idx == len(step_list) - 1
+  ```
+
+- Removed `enable_gradient_in_rollout: false` from the Wan TDM example config.
+- Added config smoke coverage that asserts the Wan TDM config no longer
+  contains `enable_gradient_in_rollout`.
+- Added docs text explaining the reference-style gradient behavior.
+
+Local checks:
+
+```text
+python -m py_compile fastvideo/train/methods/distribution_matching/tdm.py \
+  tests/local_tests/tdm/test_tdm_config_smoke.py
+
+git diff --check
+```
+
+Result: both passed.
+
+```text
+uvx pre-commit run --files fastvideo/train/methods/distribution_matching/tdm.py \
+  tests/local_tests/tdm/test_tdm_config_smoke.py \
+  examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+  docs/training/train_infra.md
+```
+
+Result:
+
+- `yapf`: passed
+- `ruff`: passed
+- `codespell`: passed
+- `PyMarkdown`: passed
+- `actionlint`: skipped, no files
+- filename check: passed
+- suggestion hook: passed
+- `mypy`: failed before type-checking with the known hyphenated worktree
+  package-name error:
+  `issue-775-tdm is not a valid Python package name`
+
+Direct mypy passed:
+
+```text
+uvx mypy --python-version 3.10 --follow-imports skip \
+  --disable-error-code union-attr --disable-error-code override \
+  --explicit-package-bases fastvideo/train/methods/distribution_matching/tdm.py
+```
+
+Modal L40S local-test smoke passed:
+
+```text
+Modal app: ap-QFB1GdYJkjQDHriHhY9Oor
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 1 \
+  --install-extra test \
+  --git-commit 1afc867c8b42f138d9fbc6535e3f1c854224f9ea \
+  --command "pytest tests/local_tests/tdm/ -v -s"
+```
+
+Result:
+
+```text
+10 passed, 14 warnings in 19.47s
+```
+
+Current remaining TODO order:
+
+1. Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
+2. Longer-term goals: validate TDM convergence, check whether the flow-matching
    bridge behaves well in output quality, train and evaluate a useful
    distilled adapter, and compare 4-step Wan output against DMD or
    Self-Forcing baselines.
