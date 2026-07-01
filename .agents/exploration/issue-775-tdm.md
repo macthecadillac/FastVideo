@@ -1014,6 +1014,78 @@ Notes:
 - Non-fatal warnings were emitted at process exit because
   `destroy_process_group()` is not called before `torchrun` exits.
 
+Small Modal training test plan:
+
+Goal: move beyond "one step executes" and run a bounded 20-50 step training
+test with observable metrics and persisted validation artifacts. This should
+still be treated as a sanity test, not a quality or convergence benchmark.
+
+Requirements:
+
+- Metric visibility. The trainer produces `total_loss`, `generator_loss`,
+  `fake_score_loss`, `update_student`, `step_time_sec`, and related metrics,
+  but `trackers: [none]` discards them. Use either W&B if Modal credentials are
+  configured, or preferably add a tiny JSONL/stdout tracker so metrics are
+  saved under `/root/data/...` and can be inspected without external services.
+- Persisted output. Put the output dir under `/root/data` and run the Modal
+  launcher with `--commit-volume`; otherwise metric files, validation videos,
+  and other artifacts may not survive the job.
+- Bounded run. Start with 20-50 steps on the staged small dataset:
+  `/root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset`.
+- Optional validation videos. The validation callback writes `.mp4` files to
+  `output_dir` even when the tracker is `none`. Setting
+  `callbacks.validation.every_steps=20` should produce step-0 and step-20
+  validation samples for quick before/after inspection.
+
+Suggested command shape after adding metric output:
+
+```text
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 4 \
+  --install-extra test \
+  --commit-volume \
+  --git-commit <commit-with-metric-logging> \
+  --command "torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+    --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+    --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+    --training.loop.max_train_steps 20 \
+    --training.checkpoint.training_state_checkpointing_steps 0 \
+    --training.checkpoint.output_dir /root/data/tdm_small_train_20 \
+    --callbacks.validation.every_steps 20 \
+    --callbacks.validation.output_dir /root/data/tdm_small_train_20/validation"
+```
+
+Keep checkpointing disabled for the first small training test. DCP checkpoint
+writes can make the run slower and produce large artifacts, and they are not
+needed to validate short-run training behavior.
+
+Correctness checks for the small training test:
+
+- Metrics file exists and contains the expected number of steps.
+- `total_loss`, `fake_score_loss`, and `generator_loss` are finite: no NaN or
+  Inf.
+- `fake_score_loss` is finite every step.
+- `update_student` matches `generator_update_interval=5`.
+- `generator_loss` is zero or absent on non-generator steps and finite/nonzero
+  on generator update steps.
+- Grad norms, if logged, are finite and not exploding.
+- Step time is plausible and the job has no OOM, worker restart, or distributed
+  failure.
+- Validation `.mp4` files exist for the expected steps.
+- Validation videos decode successfully.
+- Frame count and resolution match the expected Wan config.
+- Pixel statistics are sane: not all black, all white, constant, or corrupted.
+- Quick visual inspection shows video-like samples, not broken tensor layouts
+  or pure decode noise.
+
+Longer-term goals not proven by the small training test:
+
+- TDM convergence.
+- Flow-matching bridge equivalence to the paper in output quality.
+- Whether the distilled model is good.
+- Whether 4-step Wan samples beat or match DMD or Self-Forcing baselines.
+
 Known remaining work:
 
 - Inspect loss keys and confirm no NaNs.
