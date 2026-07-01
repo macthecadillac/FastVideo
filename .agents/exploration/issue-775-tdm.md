@@ -869,11 +869,31 @@ Local tests intentionally not run:
 Reason: repo AGENTS.md says not to run tests locally; validation should happen
 on Modal.
 
+Modal validation run:
+
+```text
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 1 \
+  --install-extra test \
+  --git-commit 966682510cbebb87ac0dd29e0b3cbd26716bb091 \
+  --command "pytest tests/local_tests/tdm/ -v -s"
+```
+
+Result:
+
+```text
+Modal app: ap-scjQBtLeENXy1GXPNSjtoP
+tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_single_train_step_reports_losses_and_routes_backward PASSED
+tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_respects_generator_update_interval PASSED
+tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_reconstructs_noisier_point_for_video_latents PASSED
+tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_raises_for_lower_sigma_target PASSED
+tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_effective_noise_and_snr_match_wan_parameterization PASSED
+5 passed, 14 warnings in 16.94s
+```
+
 Known remaining work:
 
-- Run Modal L40S validation from branch `interleavethinker` with this branch's
-  patch.
-- Run `tests/local_tests/tdm/` on Modal.
 - Run a very short Wan TDM training smoke with
   `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`.
 - Inspect loss keys and confirm no NaNs.

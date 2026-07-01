@@ -79,4 +79,21 @@ claiming the method is validated.
 
 ## Latest Remote Evidence
 
-No Modal validation has been run yet for the TDM implementation.
+Modal L40S run `ap-scjQBtLeENXy1GXPNSjtoP` validated commit
+`966682510cbebb87ac0dd29e0b3cbd26716bb091` from
+`https://github.com/macthecadillac/FastVideo.git`.
+
+```text
+pytest tests/local_tests/tdm/ -v -s
+5 passed, 14 warnings in 16.94s
+```
+
+The run covered:
+
+- `test_tdm_single_train_step_reports_losses_and_routes_backward`
+- `test_tdm_respects_generator_update_interval`
+- `test_flow_transition_reconstructs_noisier_point_for_video_latents`
+- `test_flow_transition_raises_for_lower_sigma_target`
+- `test_flow_effective_noise_and_snr_match_wan_parameterization`
+
+Wan checkpoint training smoke has not been run yet.
