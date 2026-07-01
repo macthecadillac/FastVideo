@@ -52,6 +52,7 @@ class TDMSampleContext:
     proposal_noise: torch.Tensor
     transition_beta: torch.Tensor
     trajectory_index: int
+    target_trajectory_index: int
 
 
 def _expand_sigma_for_latents(
@@ -291,6 +292,7 @@ class TDMMethod(DMD2Method):
             fake_score_loss,
             critic_ctx,
             critic_outputs,
+            fake_score_metrics,
         ) = self._tdm_fake_score_loss(training_batch)
 
         total_loss = generator_loss + fake_score_loss
@@ -307,6 +309,7 @@ class TDMMethod(DMD2Method):
             "critic_ctx": critic_ctx,
         }
         metrics: dict[str, LogScalar] = {"update_student": float(update_student)}
+        metrics.update(fake_score_metrics)
         return loss_map, outputs, metrics
 
     def _get_denoising_step_list(
@@ -522,12 +525,13 @@ class TDMMethod(DMD2Method):
             proposal_noise=proposal_noise,
             transition_beta=beta,
             trajectory_index=from_idx,
+            target_trajectory_index=to_idx,
         )
 
     def _tdm_fake_score_loss(
         self,
         batch: TrainingBatch,
-    ) -> tuple[torch.Tensor, Any, dict[str, Any]]:
+    ) -> tuple[torch.Tensor, Any, dict[str, Any], dict[str, LogScalar]]:
         with torch.no_grad():
             trajectory = self._student_trajectory(batch, with_grad=False)
             context = self._sample_tdm_context(trajectory)
@@ -542,7 +546,8 @@ class TDMMethod(DMD2Method):
         )
         elementwise = self._elementwise_loss(fake_x0, context.clean_latents)
         per_sample = _mean_except_batch(elementwise)
-        weights = self._tdm_fake_score_weights(context).to(device=per_sample.device, dtype=per_sample.dtype)
+        weight_components = self._tdm_fake_score_weight_components(context)
+        weights = weight_components["weights"].to(device=per_sample.device, dtype=per_sample.dtype)
         fake_score_loss = (per_sample * weights).mean()
 
         batch.fake_score_latent_vis_dict = {
@@ -551,16 +556,22 @@ class TDMMethod(DMD2Method):
             "fake_score_source_timestep": context.timestep_from.float().detach(),
         }
         outputs = {"fake_score_latent_vis_dict": (batch.fake_score_latent_vis_dict)}
+        metrics = self._tdm_fake_score_metrics(
+            context,
+            per_sample,
+            weight_components,
+        )
         return (
             fake_score_loss,
             (batch.timesteps, batch.attn_metadata),
             outputs,
+            metrics,
         )
 
-    def _tdm_fake_score_weights(
+    def _tdm_fake_score_weight_components(
         self,
         context: TDMSampleContext,
-    ) -> torch.Tensor:
+    ) -> dict[str, torch.Tensor]:
         snr = flow_snr(context.sigma_to, eps=self._sigma_eps)
         snr_weight = torch.minimum(snr, torch.full_like(snr, self._snr_clip)) / snr.clamp_min(self._sigma_eps)
 
@@ -572,7 +583,64 @@ class TDMMethod(DMD2Method):
             max=20.0,
         ))
         importance = importance.clamp(max=self._importance_weight_clip)
-        return snr_weight.reshape(-1).mean() * importance.detach()
+        weights = snr_weight.reshape(-1).mean() * importance.detach()
+        return {
+            "snr": snr.detach(),
+            "snr_weight": snr_weight.detach(),
+            "importance": importance.detach(),
+            "weights": weights.detach(),
+            "mixed_noise_sq": mixed_sq.detach(),
+            "proposal_noise_sq": proposal_sq.detach(),
+        }
+
+    def _tdm_fake_score_weights(
+        self,
+        context: TDMSampleContext,
+    ) -> torch.Tensor:
+        return self._tdm_fake_score_weight_components(context)["weights"]
+
+    def _tdm_fake_score_metrics(
+        self,
+        context: TDMSampleContext,
+        per_sample_loss: torch.Tensor,
+        weight_components: dict[str, torch.Tensor],
+    ) -> dict[str, LogScalar]:
+        weights = weight_components["weights"].float()
+        importance = weight_components["importance"].float()
+        per_sample_loss = per_sample_loss.detach().float()
+        snr = weight_components["snr"].float()
+        snr_weight = weight_components["snr_weight"].float()
+        sigma_to = context.sigma_to.detach().float()
+        max_sigma = torch.ones_like(sigma_to)
+        terminal = torch.isclose(
+            sigma_to,
+            max_sigma,
+            rtol=0.0,
+            atol=1e-6,
+        ).float()
+        return {
+            "tdm/fake_score/sigma_from": context.sigma_from.detach().float().mean(),
+            "tdm/fake_score/sigma_to": sigma_to.mean(),
+            "tdm/fake_score/timestep_from": context.timestep_from.detach().float().mean(),
+            "tdm/fake_score/timestep_to": context.timestep_to.detach().float().mean(),
+            "tdm/fake_score/trajectory_index_from": float(context.trajectory_index),
+            "tdm/fake_score/trajectory_index_to": float(context.target_trajectory_index),
+            "tdm/fake_score/sigma_to_is_terminal": terminal.mean(),
+            "tdm/fake_score/snr": snr.mean(),
+            "tdm/fake_score/snr_weight": snr_weight.mean(),
+            "tdm/fake_score/importance_min": importance.min(),
+            "tdm/fake_score/importance_mean": importance.mean(),
+            "tdm/fake_score/importance_max": importance.max(),
+            "tdm/fake_score/weight_min": weights.min(),
+            "tdm/fake_score/weight_mean": weights.mean(),
+            "tdm/fake_score/weight_max": weights.max(),
+            "tdm/fake_score/per_sample_loss_min": per_sample_loss.min(),
+            "tdm/fake_score/per_sample_loss_mean": per_sample_loss.mean(),
+            "tdm/fake_score/per_sample_loss_max": per_sample_loss.max(),
+            "tdm/fake_score/mixed_noise_sq_mean": weight_components["mixed_noise_sq"].float().mean(),
+            "tdm/fake_score/proposal_noise_sq_mean": weight_components["proposal_noise_sq"].float().mean(),
+            "tdm/fake_score/transition_beta_mean": context.transition_beta.detach().float().mean(),
+        }
 
     def _sample_training_timestep(self, device: torch.device) -> torch.Tensor:
         timestep = torch.randint(

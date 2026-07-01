@@ -1264,6 +1264,24 @@ Small training test execution status:
 
 Known remaining work:
 
+- Current TODO order:
+  1. Investigate why `fake_score_loss` is exactly `0.0` on several short-run
+     steps. Add diagnostics for fake-score weighting/sampling:
+     `sigma_from`, `sigma_to`, SNR weight, importance weight stats,
+     per-sample loss before weighting, and selected trajectory index. Then
+     rerun a short Modal test.
+  2. Decide whether `enable_gradient_in_rollout` should remain default
+     `false`. Current default is memory-friendly and passed the smoke/sanity
+     runs, but compare against `true` for memory fit and gradient behavior.
+  3. Compare `student_sample_type: sde` versus `ode`. Current config uses
+     `sde`; rerun the same short Modal sanity shape with `ode` and compare
+     finite losses, step time, validation artifacts, and fake-score zero
+     steps.
+  4. Longer-term goals after sanity work: validate TDM convergence, check
+     whether the flow-matching bridge behaves well in output quality, train
+     and evaluate a useful distilled adapter, and compare 4-step Wan output
+     against DMD or Self-Forcing baselines.
+
 - Investigate whether `fake_score_loss == 0.0` on many short-run steps is
   expected from the current weighting/sampling path or indicates an objective
   issue that longer tests would expose.

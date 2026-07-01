@@ -190,6 +190,12 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert bool(loss_map["generator_loss"].isfinite().item())
     assert bool(loss_map["fake_score_loss"].isfinite().item())
     assert metrics["update_student"] == 1.0
+    assert "tdm/fake_score/sigma_from" in metrics
+    assert "tdm/fake_score/sigma_to" in metrics
+    assert "tdm/fake_score/snr_weight" in metrics
+    assert "tdm/fake_score/importance_mean" in metrics
+    assert "tdm/fake_score/per_sample_loss_mean" in metrics
+    assert "tdm/fake_score/trajectory_index_from" in metrics
     assert outputs["_fv_backward"]["update_student"] is True
 
     method.backward(loss_map, outputs)
