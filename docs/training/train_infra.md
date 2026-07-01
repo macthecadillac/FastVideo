@@ -89,6 +89,7 @@ Which roles are needed depends on the training method:
 | Fine-tune (SFT) | `student` |
 | Diffusion-Forcing SFT | `student` |
 | DMD2 | `student`, `teacher`, `critic` |
+| TDM | `student`, `teacher`, `critic` |
 | Self-Forcing | `student` (causal), `teacher`, `critic` |
 
 ### `method` — Training algorithm
@@ -286,6 +287,79 @@ method:
 | `fake_score_learning_rate` | *(required)* | Critic optimizer learning rate |
 | `fake_score_betas` | *(required)* | Critic optimizer Adam betas |
 | `fake_score_lr_scheduler` | *(required)* | Critic LR scheduler type |
+
+### TDM (Trajectory Distribution Matching)
+
+Ports Trajectory Distribution Matching to FastVideo's modular trainer. The
+original TDM paper and demo target CogVideoX-2B with diffusion notation; the
+FastVideo implementation adapts the objective to Wan flow matching. Production
+code uses Wan's forward process:
+
+```text
+x_sigma = (1 - sigma) * x0 + sigma * eps
+x0_hat = x_sigma - sigma * model_output
+```
+
+It keeps the TDM role structure: a few-step trainable student generates a
+trajectory, a trainable fake-score critic learns from generated trajectory
+points, and a frozen teacher supplies real-score guidance for the generator
+target.
+
+```yaml
+models:
+  student:
+    _target_: fastvideo.train.models.wan.WanModel
+    init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    trainable: true
+    lora:
+      enable: true
+      rank: 16
+      alpha: 32
+  teacher:
+    _target_: fastvideo.train.models.wan.WanModel
+    init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    trainable: false
+    disable_custom_init_weights: true
+  critic:
+    _target_: fastvideo.train.models.wan.WanModel
+    init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    trainable: true
+    disable_custom_init_weights: true
+    lora:
+      enable: true
+      rank: 16
+      alpha: 32
+
+method:
+  _target_: fastvideo.train.methods.distribution_matching.tdm.TDMMethod
+  rollout_mode: simulate
+  tdm_denoising_steps: [1000, 750, 500, 250]
+  generator_update_interval: 5
+  real_score_guidance_scale: 4.5
+  student_sample_type: sde
+  noise_interval_mode: separate
+
+  fake_score_learning_rate: 8.0e-6
+  fake_score_betas: [0.0, 0.999]
+  fake_score_lr_scheduler: constant
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `rollout_mode` | *(required)* | Currently must be `"simulate"` |
+| `tdm_denoising_steps` | *(required)* | Few-step student trajectory schedule |
+| `student_sample_type` | `"sde"` | `"sde"` re-noises each predicted x0; `"ode"` carries effective flow noise |
+| `noise_interval_mode` | `"separate"` | Fake-score noising target: sampled larger sigma or terminal sigma |
+| `use_randmid` | `true` | Randomly choose the generated trajectory point for fake-score training |
+| `snr_clip` | `5.0` | Clip the flow-SNR fake-score weight |
+| `importance_weight_clip` | `10.0` | Clip mixed-noise importance weights |
+| `normalize_generator_delta` | `true` | Normalize real-vs-fake generator target delta |
+| `use_huber` | `false` | Use Huber loss instead of MSE for TDM losses |
+| `huber_c` | `0.001` | Huber delta when `use_huber=true` |
+
+See `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml` for a
+complete Wan LoRA config. Treat this as a Wan adaptation of TDM, not exact
+CogVideoX reference parity.
 
 ### Self-Forcing (Causal DMD)
 
@@ -564,6 +638,7 @@ fastvideo/train/
     base.py                   # TrainingMethod ABC
     distribution_matching/
       dmd2.py                 # DMD2 distillation
+      tdm.py                  # Trajectory Distribution Matching
       self_forcing.py         # Self-Forcing (causal DMD)
     fine_tuning/
       finetune.py             # Supervised fine-tuning

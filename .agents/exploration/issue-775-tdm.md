@@ -728,3 +728,155 @@ Open research risk:
   model-to-clean conversion. The Wan bridge is mathematically consistent for
   the linear flow noising family, but empirical behavior is not guaranteed until
   Modal training smoke and qualitative probes are run.
+
+## Implementation Update: First Wan TDM Method Pass
+
+Generated: 2026-07-01 after implementing the first code pass on branch
+`issue/775-tdm` in worktree `/tmp/fastvideo-worktrees/issue-775-tdm`.
+
+Scope implemented:
+
+- Added `fastvideo/train/methods/distribution_matching/tdm.py`.
+- Registered `TDMMethod` in:
+  - `fastvideo/train/methods/distribution_matching/__init__.py`
+  - `fastvideo/train/methods/__init__.py`
+- Added Wan LoRA example config:
+  - `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`
+- Added local tests and reviewer README:
+  - `tests/local_tests/tdm/README.md`
+  - `tests/local_tests/tdm/__init__.py`
+  - `tests/local_tests/tdm/test_tdm_scheduler_math.py`
+  - `tests/local_tests/tdm/test_tdm_method_unit.py`
+- Updated `docs/training/train_infra.md` with TDM roles, config keys, and the
+  diffusion-to-flow caveat.
+
+Implementation details:
+
+- `TDMMethod` subclasses `DMD2Method` to reuse:
+  - `student` / `teacher` / `critic` role validation;
+  - fake-score optimizer and scheduler construction;
+  - generator update interval;
+  - CFG-unconditional parsing;
+  - custom student/critic backward routing.
+- TDM currently requires `method.rollout_mode: simulate`.
+- First target config uses LoRA for both student and critic, with frozen
+  teacher.
+- No production runtime imports from `Luo-Yihong/TDM`.
+
+Flow bridge code added:
+
+- `flow_effective_noise(...)`
+  recovers effective Wan flow noise from
+  `x_sigma = (1 - sigma) * x0 + sigma * eps`.
+- `flow_snr(...)`
+  uses the flow analogue `((1 - sigma) / sigma)^2`.
+- `flow_transition_to_noisier_sigma(...)`
+  implements the Wan equivalent of TDM's between-timestep noising:
+
+  ```text
+  a = (1 - sigma_to) / (1 - sigma_from)
+  beta_sq = sigma_to^2 - (a * sigma_from)^2
+  x_to = a * x_from + sqrt(beta_sq) * eps_rand
+  mixed_eps = (a * sigma_from * eps_from + sqrt(beta_sq) * eps_rand) / sigma_to
+  ```
+
+- The transition rejects `sigma_to < sigma_from`, `sigma_from == 1`, and
+  `sigma_to == 0`; it only clamps tiny negative `beta_sq` values caused by
+  numerical noise.
+
+TDM trajectory behavior:
+
+- `_student_trajectory(...)` starts from pure noise and runs the student over
+  `tdm_denoising_steps`.
+- `student_sample_type: sde` re-noises each predicted `x0` with fresh noise at
+  the next lower sigma.
+- `student_sample_type: ode` carries effective flow noise to the next lower
+  sigma, matching the pattern already used in Self-Forcing.
+- `enable_gradient_in_rollout: false` defaults to DMD2-like memory behavior:
+  only the final student prediction carries generator gradients.
+
+TDM fake-score loss:
+
+- Builds a no-grad student trajectory.
+- Samples a generated trajectory point whose sigma is not the max sigma.
+- Moves it to a strictly larger sigma when possible.
+- Trains the critic through `critic.predict_x0(...)` to recover the generated
+  clean latent.
+- Applies flow-SNR clipping and Gaussian mixed-noise importance weighting:
+  `exp(0.5 * (proposal_noise^2 - mixed_noise^2))`, clipped by
+  `importance_weight_clip`.
+
+TDM generator loss:
+
+- Uses final generated clean latent from the student trajectory.
+- Noises it at a sampled Wan training timestep.
+- Queries:
+  - critic fake `x0`;
+  - teacher conditional `x0`;
+  - teacher unconditional `x0`.
+- Builds CFG teacher target as:
+  `teacher_uncond + scale * (teacher_cond - teacher_uncond)`.
+- Pushes the student toward:
+  `student_x0 + (teacher_cfg_x0 - fake_x0)`, optionally normalized by
+  `mean(abs(student_x0 - teacher_cfg_x0))`.
+
+Local checks run:
+
+```text
+python -m py_compile fastvideo/train/methods/distribution_matching/tdm.py \
+  tests/local_tests/tdm/test_tdm_scheduler_math.py \
+  tests/local_tests/tdm/test_tdm_method_unit.py
+```
+
+Result: passed.
+
+```text
+uvx mypy --python-version 3.10 --follow-imports skip \
+  --disable-error-code union-attr --disable-error-code override \
+  --explicit-package-bases \
+  fastvideo/train/methods/__init__.py \
+  fastvideo/train/methods/distribution_matching/__init__.py \
+  fastvideo/train/methods/distribution_matching/tdm.py
+```
+
+Result: passed.
+
+Pre-commit status:
+
+```text
+uvx pre-commit run --files <changed-files>
+```
+
+Result:
+
+- `yapf`: passed
+- `ruff`: passed
+- `codespell`: passed
+- `PyMarkdown`: passed
+- `actionlint`: skipped, no files
+- `check-filenames`: passed
+- `mypy`: failed before type-checking with
+  `issue-775-tdm is not a valid Python package name`
+
+The mypy failure is caused by the hyphenated worktree basename plus the repo's
+tracked root `__init__.py`. Direct mypy with the same hook args and
+`--explicit-package-bases` passes, as shown above.
+
+Local tests intentionally not run:
+
+- `pytest tests/local_tests/tdm/ -v -s`
+
+Reason: repo AGENTS.md says not to run tests locally; validation should happen
+on Modal.
+
+Known remaining work:
+
+- Run Modal L40S validation from branch `interleavethinker` with this branch's
+  patch.
+- Run `tests/local_tests/tdm/` on Modal.
+- Run a very short Wan TDM training smoke with
+  `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`.
+- Inspect loss keys and confirm no NaNs.
+- Decide whether `enable_gradient_in_rollout` should remain default `false` or
+  switch to `true` after memory and behavior are observed.
+- Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
