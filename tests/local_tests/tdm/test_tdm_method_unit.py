@@ -137,7 +137,11 @@ class _TinyRoleModel(ModelBase):
         (loss / max(1, int(grad_accum_rounds))).backward()
 
 
-def _build_method(*, generator_update_interval: int = 1) -> tuple[TDMMethod, _TinyRoleModel, _TinyRoleModel]:
+def _build_method(
+    *,
+    generator_update_interval: int = 1,
+    method_overrides: dict[str, Any] | None = None,
+) -> tuple[TDMMethod, _TinyRoleModel, _TinyRoleModel]:
     training = TrainingConfig(
         data=DataConfig(preprocessed_data_type="text_only", seed=0),
         optimizer=OptimizerConfig(
@@ -160,6 +164,8 @@ def _build_method(*, generator_update_interval: int = 1) -> tuple[TDMMethod, _Ti
         "fake_score_betas": [0.0, 0.999],
         "fake_score_lr_scheduler": "constant",
     }
+    if method_overrides:
+        method_cfg.update(method_overrides)
     cfg = SimpleNamespace(
         training=training,
         method=method_cfg,
@@ -216,3 +222,32 @@ def test_tdm_respects_generator_update_interval() -> None:
 
     assert student.backward_calls == 0
     assert critic.backward_calls == 1
+
+
+def test_tdm_separate_noise_interval_excludes_terminal_sigma() -> None:
+    method, _, _ = _build_method(method_overrides={"noise_interval_mode": "separate"})
+    batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    trajectory = method._student_trajectory(batch, with_grad=False)
+    max_sigma = trajectory.sigmas.max().item()
+
+    for _ in range(16):
+        context = method._sample_tdm_context(trajectory)
+
+        assert context.sigma_to.item() < max_sigma - 1e-6
+        assert context.sigma_to.item() > context.sigma_from.item()
+        assert context.trajectory_index in {2, 3}
+        assert context.target_trajectory_index in {1, 2}
+
+
+def test_tdm_to_terminal_noise_interval_targets_max_sigma() -> None:
+    method, _, _ = _build_method(method_overrides={
+        "noise_interval_mode": "to_terminal",
+        "use_randmid": False,
+    })
+    batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    trajectory = method._student_trajectory(batch, with_grad=False)
+
+    context = method._sample_tdm_context(trajectory)
+
+    assert context.target_trajectory_index == int(torch.argmax(trajectory.sigmas).item())
+    assert context.sigma_to.item() == trajectory.sigmas.max().item()

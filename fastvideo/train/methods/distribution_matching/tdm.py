@@ -442,12 +442,26 @@ class TDMMethod(DMD2Method):
         trajectory: TDMTrajectory,
     ) -> TDMSampleContext:
         device = trajectory.sigmas.device
-        eligible = torch.nonzero(
-            trajectory.sigmas < trajectory.sigmas.max() - 1e-6,
-            as_tuple=False,
-        ).flatten()
+        interval_eps = 1e-6
+        max_sigma = trajectory.sigmas.max()
+        if self._noise_interval_mode == "to_terminal":
+            eligible = torch.nonzero(
+                trajectory.sigmas < max_sigma - interval_eps,
+                as_tuple=False,
+            ).flatten()
+        else:
+            source_sigmas = trajectory.sigmas.reshape(-1, 1)
+            target_sigmas = trajectory.sigmas.reshape(1, -1)
+            non_terminal_targets = target_sigmas < max_sigma - interval_eps
+            valid_targets = (target_sigmas > source_sigmas + interval_eps) & non_terminal_targets
+            eligible = torch.nonzero(
+                valid_targets.any(dim=1),
+                as_tuple=False,
+            ).flatten()
         if eligible.numel() == 0:
-            raise ValueError("TDM trajectory has no point that can be noised to a larger sigma")
+            if self._noise_interval_mode == "to_terminal":
+                raise ValueError("TDM trajectory has no point that can be noised to terminal sigma")
+            raise ValueError("TDM separate noise interval requires at least two non-terminal trajectory sigmas")
 
         if self._use_randmid:
             selected_pos = torch.randint(
@@ -467,14 +481,12 @@ class TDMMethod(DMD2Method):
             to_idx = int(torch.argmax(trajectory.sigmas).item())
         else:
             candidates = torch.nonzero(
-                trajectory.sigmas > sigma_from[0] + 1e-6,
+                (trajectory.sigmas > sigma_from[0] + interval_eps)
+                & (trajectory.sigmas < max_sigma - interval_eps),
                 as_tuple=False,
             ).flatten()
             if candidates.numel() == 0:
-                candidates = torch.nonzero(
-                    trajectory.sigmas >= sigma_from[0] - 1e-6,
-                    as_tuple=False,
-                ).flatten()
+                raise RuntimeError("TDM separate noise source has no non-terminal larger target sigma")
             to_pos = torch.randint(
                 0,
                 candidates.numel(),
