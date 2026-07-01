@@ -1127,11 +1127,146 @@ Small training test execution status:
     --explicit-package-bases fastvideo/training/trackers.py
   ```
 
-- Modal validation and the 20-step training test are still pending.
+- Modal L40S validation for the updated local TDM tests passed:
+
+  ```text
+  python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+    --gpu-type L40S \
+    --num-gpus 1 \
+    --install-extra test \
+    --git-commit 0ebbcbf5db4d4e3fa7254a0389c767cbe42e26f6 \
+    --command "pytest tests/local_tests/tdm/ -v -s"
+  ```
+
+  Result:
+
+  ```text
+  Modal app: ap-IJcUQx7RTXFIPu6E8f859y
+  tests/local_tests/tdm/test_jsonl_tracker.py::test_jsonl_tracker_writes_metrics_artifacts_and_files PASSED
+  tests/local_tests/tdm/test_tdm_config_smoke.py::test_tdm_wan_lora_config_resolves_without_loading_weights PASSED
+  tests/local_tests/tdm/test_tdm_config_smoke.py::test_tdm_flow_bridge_smoke PASSED
+  tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_single_train_step_reports_losses_and_routes_backward PASSED
+  tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_respects_generator_update_interval PASSED
+  tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_reconstructs_noisier_point_for_video_latents PASSED
+  tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_raises_for_lower_sigma_target PASSED
+  tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_effective_noise_and_snr_match_wan_parameterization PASSED
+  8 passed, 14 warnings in 16.48s
+  ```
+
+- Modal 20-step Wan TDM training sanity test passed:
+
+  ```text
+  python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+    --gpu-type L40S \
+    --num-gpus 4 \
+    --install-extra test \
+    --commit-volume \
+    --git-commit 0ebbcbf5db4d4e3fa7254a0389c767cbe42e26f6 \
+    --command "torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+      --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+      --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+      --training.loop.max_train_steps 20 \
+      --training.checkpoint.training_state_checkpointing_steps 0 \
+      --training.checkpoint.output_dir /root/data/tdm_small_train_20_0ebbcbf5 \
+      --training.tracker.trackers [jsonl] \
+      --training.tracker.run_name tdm_small_train_20 \
+      --callbacks.validation.every_steps 20 \
+      --callbacks.validation.output_dir /root/data/tdm_small_train_20_0ebbcbf5/validation"
+  ```
+
+  Result:
+
+  ```text
+  Modal app: ap-PYyDPEig30XKIivl6OJGvT
+  Steps: 100% complete, 20/20 [08:08<00:00, 24.44s/it]
+  INFO 07-01 09:00:41.550 [train.py:135] Training completed
+  Completed L40S job ... commit_volume=True
+  Exit code: 0
+  ```
+
+  Persisted output root:
+
+  ```text
+  /root/data/tdm_small_train_20_0ebbcbf5
+  ```
+
+  Persisted files confirmed with `modal volume ls`:
+
+  ```text
+  tdm_small_train_20_0ebbcbf5/tracker/config.json
+  tdm_small_train_20_0ebbcbf5/tracker/metrics.jsonl
+  tdm_small_train_20_0ebbcbf5/tracker/artifacts.jsonl
+  tdm_small_train_20_0ebbcbf5/tracker/files
+  tdm_small_train_20_0ebbcbf5/validation/validation_step_0_inference_steps_4_video_{0..3}.mp4
+  tdm_small_train_20_0ebbcbf5/validation/validation_step_20_inference_steps_4_video_{0..3}.mp4
+  ```
+
+- Modal artifact check passed:
+
+  ```text
+  Modal app: ap-VcTSIWJWRJj6xzVGal6MLx
+  ```
+
+  JSONL metrics summary:
+
+  ```text
+  metric_rows: 52
+  loss_step_count: 20
+  loss_steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  update_steps: [5, 10, 15, 20]
+  student_grad_steps: [5, 10, 15, 20]
+  nonfinite: []
+  step_time_sec: min=17.9570, mean=23.1336, max=41.0341
+  total_loss: first=0.0016110574, last=0.3423088789, min=0.0, max=0.4693446159
+  fake_score_loss: first=0.0016110574, last=0.0007226327, min=0.0, max=0.0017619669
+  generator_loss: first=0.0, last=0.3415862322, min=0.0, max=0.4693446159
+  ```
+
+  Notes:
+
+  - All scalar loss metrics were finite; no NaN/Inf was recorded.
+  - `update_student` cadence matched `generator_update_interval=5`.
+  - `generator_loss` was zero on non-generator steps and nonzero on update
+    steps.
+  - `fake_score_loss` was finite every step but exactly zero on several
+    steps. This is not a failure for this short sanity test, but it should be
+    watched in longer runs to distinguish valid near-zero weighted loss from a
+    fake-score objective issue.
+
+  Video artifact summary:
+
+  ```text
+  video_count: 8
+  each shape: [77, 448, 832, 3]
+  dtype: uint8
+  per-video std range: 11.9000 to 39.8126
+  per-video first_last_abs_mean range: 1.0957 to 4.9165
+  file size range: 165419 to 1321487 bytes
+  ```
+
+  All validation MP4s decoded successfully, had the expected frame count and
+  resolution, and were not all black/white/constant by pixel statistics.
+
+- Created a persisted validation contact sheet:
+
+  ```text
+  Modal app: ap-B91hOAX0GUQdMNo8eSJygm
+  /root/data/tdm_small_train_20_0ebbcbf5/validation_contact_sheet.png
+  shape: (896, 624, 3)
+  min=15, max=199, mean=58.0492, std=27.6443
+  ```
+
+  The contact sheet was downloaded locally to
+  `/tmp/tdm_small_train_20_contact_sheet.png` and visually inspected. The
+  frames are valid decoded video frames with no obvious tensor layout or file
+  corruption. They are low-detail/abstract and do not demonstrate quality or
+  prompt alignment, which is expected for a 20-step sanity run.
 
 Known remaining work:
 
-- Inspect loss keys and confirm no NaNs.
+- Investigate whether `fake_score_loss == 0.0` on many short-run steps is
+  expected from the current weighting/sampling path or indicates an objective
+  issue that longer tests would expose.
 - Decide whether `enable_gradient_in_rollout` should remain default `false` or
   switch to `true` after memory and behavior are observed.
 - Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
