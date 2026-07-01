@@ -905,6 +905,31 @@ Follow-up smoke-test addition:
   python -m py_compile tests/local_tests/tdm/test_tdm_config_smoke.py
   ```
 
+- Modal L40S smoke validation passed:
+
+  ```text
+  python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+    --gpu-type L40S \
+    --num-gpus 1 \
+    --install-extra test \
+    --git-commit 103f9d4c764258f04e7207dcd3404b33684fbb07 \
+    --command "pytest tests/local_tests/tdm/ -v -s"
+  ```
+
+  Result:
+
+  ```text
+  Modal app: ap-AxmFK4iKRNLINjNufDH4Zi
+  tests/local_tests/tdm/test_tdm_config_smoke.py::test_tdm_wan_lora_config_resolves_without_loading_weights PASSED
+  tests/local_tests/tdm/test_tdm_config_smoke.py::test_tdm_flow_bridge_smoke PASSED
+  tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_single_train_step_reports_losses_and_routes_backward PASSED
+  tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_respects_generator_update_interval PASSED
+  tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_reconstructs_noisier_point_for_video_latents PASSED
+  tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_raises_for_lower_sigma_target PASSED
+  tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_effective_noise_and_snr_match_wan_parameterization PASSED
+  7 passed, 14 warnings in 16.74s
+  ```
+
 Known remaining work:
 
 - Run a very short Wan TDM training smoke with

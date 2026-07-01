@@ -56,7 +56,7 @@ pytest tests/local_tests/tdm/ -v -s
 
 | Area | Test | Concern | Status |
 |---|---|---|---|
-| Config smoke | `test_tdm_config_smoke.py` | Example YAML parses, resolves `TDMMethod`, and declares expected roles/LoRA knobs without loading weights | added, not run on Modal yet |
+| Config smoke | `test_tdm_config_smoke.py` | Example YAML parses, resolves `TDMMethod`, and declares expected roles/LoRA knobs without loading weights | `PASSED on Modal L40S` |
 | Flow bridge | `test_tdm_scheduler_math.py` | Mixed-noise transition reconstructs Wan flow noising; invalid direction raises | added, not run locally |
 | Method wiring | `test_tdm_method_unit.py` | Fake models exercise loss keys and student/critic backward routing | added, not run locally |
 
@@ -96,5 +96,19 @@ The run covered:
 - `test_flow_transition_reconstructs_noisier_point_for_video_latents`
 - `test_flow_transition_raises_for_lower_sigma_target`
 - `test_flow_effective_noise_and_snr_match_wan_parameterization`
+
+Modal L40S run `ap-AxmFK4iKRNLINjNufDH4Zi` validated commit
+`103f9d4c764258f04e7207dcd3404b33684fbb07` after adding config smoke
+coverage.
+
+```text
+pytest tests/local_tests/tdm/ -v -s
+7 passed, 14 warnings in 16.74s
+```
+
+The run added coverage for:
+
+- `test_tdm_wan_lora_config_resolves_without_loading_weights`
+- `test_tdm_flow_bridge_smoke`
 
 Wan checkpoint training smoke has not been run yet.
