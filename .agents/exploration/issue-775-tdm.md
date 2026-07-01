@@ -1,6 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
+Last updated: 2026-07-01 after the 200-step SDE pilot
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -14,7 +15,8 @@ handoff keeps only state needed to continue work.
 - Modal launcher worktree: `/tmp/fastvideo-worktrees/interleavethinker-modal`
   on branch `interleavethinker`
 - Handoff: `.agents/exploration/issue-775-tdm.md`
-- Current latest commit before compaction: `008883d9`
+- Latest pushed issue-branch commit before the 200-step pilot:
+  `4e7d9e76` `[misc]: compact TDM handoff and pilot plan`
 
 ## GitHub State
 
@@ -105,6 +107,7 @@ Implemented behavior:
 - `ca654254` `[fix]: avoid terminal sigma in TDM separate noising`
 - `1afc867c` `[fix]: remove TDM rollout gradient option`
 - `008883d9` `[misc]: record TDM ode rollout diagnostic`
+- `4e7d9e76` `[misc]: compact TDM handoff and pilot plan`
 
 ## Validation Summary
 
@@ -154,6 +157,65 @@ Current config decision:
   with model-predicted noise at the next timestep.
 - Keep ODE as a viable alternative pending longer/qualitative evidence.
 
+200-step SDE pilot:
+
+- App: `ap-jDoLULWN2Y6VACZJCHlCQr`
+- Commit: `4e7d9e760df04c9e569a47215e74e84bbdf6a7dd`
+- Output root: `/root/data/tdm_pilot_sde_200_4e7d9e76`
+- Command summary: 4x L40S, Wan TDM default config, `student_sample_type: sde`,
+  `max_train_steps=200`, JSONL tracker enabled, validation every 100 steps,
+  DCP training-state checkpoints every 100 steps, `--commit-volume`.
+- Result: completed successfully. Training progress reached `200/200` in
+  about `1:17:55`; Modal volume commit completed.
+- Non-fatal warnings observed:
+  - `checkpoint-200` was saved at the step-200 checkpoint boundary and then
+    saved again by final training teardown, producing PyTorch DCP overwrite
+    warnings.
+  - NCCL warned that `destroy_process_group()` was not called before process
+    exit. The job still exited with code 0.
+- Metrics file:
+  `/tmp/tdm_pilot_sde_200_4e7d9e76_metrics.jsonl` downloaded from
+  `/root/data/tdm_pilot_sde_200_4e7d9e76/tracker/metrics.jsonl`.
+- Metrics summary:
+  - JSONL rows: `640`
+  - Unique steps: `1..200`
+  - Loss rows: `200`
+  - Critic grad rows: `200`
+  - Student grad rows: `40`
+  - `update_student` steps exactly matched `[5, 10, ..., 200]`
+  - Nonfinite scalar metrics: `0`
+  - `sigma_to_is_terminal` steps: `0`
+  - zero `snr_weight` steps: `0`
+  - zero `weight_mean` steps: `0`
+  - zero `fake_score_loss` steps: `0`
+  - `total_loss`: min `0.0004079751`, max `0.7137516737`,
+    mean `0.0966718541`, first `0.0016110574`, last `0.6687002182`
+  - `fake_score_loss`: min `0.0004079751`, max `0.0017997533`,
+    mean `0.0010606790`, first `0.0016110574`, last `0.0012961911`
+  - `generator_loss`: min `0.0`, max `0.7124048471`,
+    mean `0.0956111750`, first `0.0`, last `0.6674040556`
+  - `step_time_sec`: min `18.0589167890`, max `42.2056847560`,
+    mean `23.0179435935`
+- Tracker artifacts exist:
+  - `tracker/config.json`
+  - `tracker/metrics.jsonl`
+  - `tracker/artifacts.jsonl`
+  - `tracker/files`
+- Checkpoints exist:
+  - `checkpoint-100/{metadata.json,rng_state_rank0.pt,...,rng_state_rank3.pt,dcp}`
+  - `checkpoint-200/{metadata.json,rng_state_rank0.pt,...,rng_state_rank3.pt,dcp}`
+  - each DCP directory contains `.metadata` plus `__0_0.distcp` through
+    `__3_0.distcp`.
+- Validation artifacts:
+  - 12 MP4s exist: four each at steps `0`, `100`, and `200`.
+  - Downloaded to
+    `/tmp/tdm_pilot_sde_200_4e7d9e76_validation_named/`.
+  - All 12 decoded with temporary `imageio`/`imageio-ffmpeg` tooling as
+    `(77, 448, 832, 3)` `uint8`.
+  - All basic non-blank checks passed: pixel std range
+    `11.896296..39.797680`; first-vs-last frame absolute mean delta range
+    `1.095667..4.911918`.
+
 ## Modal Data And Weights
 
 Wan weights in Modal volume:
@@ -174,68 +236,18 @@ Dataset summary from earlier Modal runs:
 - 32 rows
 - 8 rows per SP group in 4-GPU runs
 
-## Current Plan
+## Completed Pilot Checks
 
-Goal: move beyond smoke testing and run a bounded quality/convergence pilot.
-
-Run a 200-step Modal job with the current default `student_sample_type: sde`.
-
-Why 200 steps:
-
-- 20-step runs proved wiring and short-run stability.
-- 200 steps is long enough to observe loss behavior and validation artifacts
-  without jumping straight to an expensive full training run.
-- 500 steps can be considered after the 200-step pilot looks healthy.
-
-Pilot settings:
-
-- GPU: 4x L40S
-- Method: Wan TDM default config, `student_sample_type: sde`
-- Max steps: `200`
-- JSONL tracker: enabled
-- Validation: every `100` steps
-- DCP training-state checkpoints: every `100` steps
-- Output root:
-  `/root/data/tdm_pilot_sde_200_<shortsha>`
-- Use `--commit-volume` so metrics, validation videos, and checkpoints persist.
-
-Planned command shape after committing this compact handoff:
-
-```text
-python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
-  --gpu-type L40S \
-  --num-gpus 4 \
-  --install-extra test \
-  --commit-volume \
-  --git-commit <current-issue-branch-sha> \
-  --command "torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
-    --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
-    --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
-    --training.loop.max_train_steps 200 \
-    --training.checkpoint.training_state_checkpointing_steps 100 \
-    --training.checkpoint.checkpoints_total_limit 3 \
-    --training.checkpoint.output_dir /root/data/tdm_pilot_sde_200_<shortsha> \
-    --training.tracker.trackers [jsonl] \
-    --training.tracker.run_name tdm_pilot_sde_200 \
-    --callbacks.validation.every_steps 100 \
-    --callbacks.validation.output_dir /root/data/tdm_pilot_sde_200_<shortsha>/validation"
-```
-
-Pilot success checks:
-
-- Job completes without OOM, worker restart, or distributed failure.
-- Metrics JSONL exists and has 200 loss rows.
-- `total_loss`, `fake_score_loss`, and `generator_loss` are finite.
-- `fake_score_loss` does not collapse to all zeros.
-- `update_student` follows `generator_update_interval=5`.
-- Terminal-sigma diagnostics remain clean:
-  - no `sigma_to_is_terminal`
-  - no zero `snr_weight`
-  - no zero `weight_mean`
-- Validation MP4s exist at expected steps and decode successfully.
-- Video frame count and resolution match the Wan validation config.
-- Pixel statistics are not constant/all-black/all-white/corrupt.
-- DCP checkpoint directories exist for expected saved steps.
+- Job completion: passed.
+- Metrics JSONL persisted with 200 loss rows: passed.
+- Finite `total_loss`, `fake_score_loss`, and `generator_loss`: passed.
+- `fake_score_loss` did not collapse to all zeros: passed.
+- `update_student` followed `generator_update_interval=5`: passed.
+- Terminal-sigma diagnostics stayed clean: passed.
+- Validation MP4s exist at expected steps and decode successfully: passed.
+- Video frame count and resolution match the Wan validation config: passed.
+- Pixel statistics are not constant/all-black/all-white/corrupt: passed.
+- DCP checkpoint directories exist for expected saved steps: passed.
 
 What this still will not prove:
 
@@ -246,8 +258,9 @@ What this still will not prove:
 
 ## Current Remaining Work
 
-1. Execute the 200-step SDE pilot above and record results here.
-2. If healthy, compare validation artifacts visually and decide whether a
+1. Compare validation artifacts visually and decide whether a
    500-step run or baseline DMD/Self-Forcing comparison is warranted.
+2. Decide whether the duplicate final `checkpoint-200` save is acceptable as
+   existing trainer behavior or should be cleaned up before PR.
 3. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
    draft PR only if explicitly requested.
