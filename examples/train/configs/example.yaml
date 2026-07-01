@@ -123,7 +123,7 @@ training:
 
   # --- training.tracker [TYPED] -> TrackerConfig ---
   tracker:
-    trackers: []                      # default: [] (auto-adds "wandb" if project_name is set)
+    trackers: []                      # default: [] (auto-adds "wandb" if project_name is set); options: none, wandb, jsonl
     project_name: my_project          # default: "fastvideo"
     run_name: my_run                  # default: ""
 

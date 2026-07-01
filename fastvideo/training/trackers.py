@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import json
+import math
 import os
 import pathlib
+import shutil
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-from collections.abc import Iterable, Iterator
 
 import torch
 
@@ -54,6 +57,22 @@ def _sanitize_wandb_config(value: Any) -> Any:
     if callable(value):
         return getattr(value, "__name__", repr(value))
     return repr(value)
+
+
+def _sanitize_jsonl_value(value: Any) -> Any:
+    value = _sanitize_wandb_config(value)
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return {
+            "_type": "nonfinite_float",
+            "value": str(value),
+        }
+    if isinstance(value, dict):
+        return {str(k): _sanitize_jsonl_value(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_sanitize_jsonl_value(v) for v in value]
+    return value
 
 
 @dataclass
@@ -231,6 +250,131 @@ class WandbTracker(BaseTracker):
         return self._wandb.Video(data, **kwargs)
 
 
+class JsonlTracker(BaseTracker):
+    """Tracker that writes metrics and artifact metadata to local JSONL files."""
+
+    def __init__(
+        self,
+        log_dir: str,
+        *,
+        config: dict[str, Any] | None = None,
+        run_name: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.log_dir = os.path.abspath(log_dir)
+        self.run_name = run_name
+        pathlib.Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self._files_dir).mkdir(parents=True, exist_ok=True)
+        if config is not None:
+            self._write_json(
+                os.path.join(self.log_dir, "config.json"),
+                _sanitize_jsonl_value(config),
+            )
+        logger.info("Initialized JSONL tracker at %s", self.log_dir)
+
+    @property
+    def _metrics_path(self) -> str:
+        return os.path.join(self.log_dir, "metrics.jsonl")
+
+    @property
+    def _artifacts_path(self) -> str:
+        return os.path.join(self.log_dir, "artifacts.jsonl")
+
+    @property
+    def _files_dir(self) -> str:
+        return os.path.join(self.log_dir, "files")
+
+    @staticmethod
+    def _write_json(
+        path: str,
+        payload: Any,
+    ) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, sort_keys=True)
+            f.write("\n")
+
+    @staticmethod
+    def _append_jsonl(
+        path: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with open(path, "a", encoding="utf-8") as f:
+            json.dump(payload, f, sort_keys=True)
+            f.write("\n")
+
+    def log(self, metrics: dict[str, Any], step: int) -> None:
+        metrics = {**self._timed_metrics, **metrics}
+        if metrics:
+            self._append_jsonl(
+                self._metrics_path,
+                {
+                    "step": int(step),
+                    "time": time.time(),
+                    "metrics": _sanitize_jsonl_value(metrics),
+                },
+            )
+            logger.info(
+                "JSONL tracker step=%s metrics=%s",
+                step,
+                sorted(str(k) for k in metrics),
+            )
+        self._timed_metrics = {}
+
+    def log_artifacts(self, artifacts: dict[str, Any], step: int) -> None:
+        if artifacts:
+            self._append_jsonl(
+                self._artifacts_path,
+                {
+                    "step": int(step),
+                    "time": time.time(),
+                    "artifacts": _sanitize_jsonl_value(artifacts),
+                },
+            )
+        self._timed_metrics = {}
+
+    def log_file(
+        self,
+        file_path: str,
+        name: str | None = None,
+    ) -> None:
+        src = os.path.abspath(file_path)
+        dst_name = name or os.path.basename(src)
+        dst = os.path.join(self._files_dir, dst_name)
+        pathlib.Path(os.path.dirname(dst)).mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(src, dst)
+        except OSError as exc:
+            logger.warning("JSONL tracker could not copy %s: %s", src, exc)
+            dst = ""
+        self._append_jsonl(
+            self._artifacts_path,
+            {
+                "step": None,
+                "time": time.time(),
+                "file": {
+                    "source": src,
+                    "path": dst,
+                    "name": dst_name,
+                },
+            },
+        )
+
+    def video(
+        self,
+        data: Any,
+        *,
+        caption: str | None = None,
+        fps: int | None = None,
+        format: str | None = None,
+    ) -> Any:
+        return {
+            "path": os.path.abspath(str(data)),
+            "caption": caption,
+            "fps": fps,
+            "format": format or "mp4",
+        }
+
+
 class SequentialTracker(BaseTracker):
     """A tracker that forwards logging calls to a sequence of trackers."""
 
@@ -286,6 +430,7 @@ class SequentialTracker(BaseTracker):
 
 
 class Trackers(str, Enum):
+    JSONL = "jsonl"
     NONE = "none"
     WANDB = "wandb"
 
@@ -314,7 +459,13 @@ def initialize_trackers(
 
     tracker_instances: list[BaseTracker] = []
     for tracker_name in tracker_names:
-        if tracker_name == Trackers.NONE.value:
+        if tracker_name == Trackers.JSONL.value:
+            tracker_instances.append(JsonlTracker(
+                os.path.abspath(log_dir),
+                config=config,
+                run_name=run_name,
+            ))
+        elif tracker_name == Trackers.NONE.value:
             tracker_instances.append(DummyTracker())
         elif tracker_name == Trackers.WANDB.value:
             tracker_instances.append(

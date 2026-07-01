@@ -1086,6 +1086,49 @@ Longer-term goals not proven by the small training test:
 - Whether the distilled model is good.
 - Whether 4-step Wan samples beat or match DMD or Self-Forcing baselines.
 
+Small training test execution status:
+
+- Added a `jsonl` tracker option in `fastvideo/training/trackers.py`.
+  `training.tracker.trackers: [jsonl]` writes scalar metrics to
+  `output_dir/tracker/metrics.jsonl`, artifact/file metadata to
+  `output_dir/tracker/artifacts.jsonl`, and copies the run YAML under
+  `output_dir/tracker/files/`.
+- Added `tests/local_tests/tdm/test_jsonl_tracker.py` to verify metrics,
+  non-finite scalar sanitization, artifact metadata, and tracked-file copying.
+- Updated `examples/train/configs/example.yaml` and
+  `docs/training/train_infra.md` to mention `none`, `wandb`, and `jsonl`
+  tracker options.
+- Local syntax check passed:
+
+  ```text
+  python -m py_compile fastvideo/training/trackers.py \
+    tests/local_tests/tdm/test_jsonl_tracker.py
+  ```
+
+- Pre-commit status for changed files:
+
+  ```text
+  uvx pre-commit run --files fastvideo/training/trackers.py \
+    tests/local_tests/tdm/test_jsonl_tracker.py \
+    docs/training/train_infra.md \
+    examples/train/configs/example.yaml
+  ```
+
+  Result: `yapf`, `ruff`, `codespell`, `PyMarkdown`, filename checks, and
+  suggestion hooks passed. The `mypy` hook failed before type-checking with the
+  known hyphenated worktree package-name error:
+  `issue-775-tdm is not a valid Python package name`.
+
+- Direct mypy for the changed production tracker file passed:
+
+  ```text
+  uvx mypy --python-version 3.10 --follow-imports skip \
+    --disable-error-code union-attr --disable-error-code override \
+    --explicit-package-bases fastvideo/training/trackers.py
+  ```
+
+- Modal validation and the 20-step training test are still pending.
+
 Known remaining work:
 
 - Inspect loss keys and confirm no NaNs.

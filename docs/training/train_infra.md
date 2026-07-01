@@ -148,6 +148,7 @@ training:
     checkpoints_total_limit: 3                # 0 = keep all
 
   tracker:
+    trackers: []  # options: none, wandb, jsonl
     project_name: my_project
     run_name: my_run
 
@@ -435,7 +436,9 @@ are saved and restored automatically on resume.
 ### ValidationCallback
 
 Runs inference with the trained model at regular intervals, saving generated
-videos and logging them to the tracker (W&B).
+videos and logging them to the configured tracker. With `jsonl`, metrics are
+written to `output_dir/tracker/metrics.jsonl` and artifact metadata to
+`output_dir/tracker/artifacts.jsonl`.
 
 ```yaml
 callbacks:
@@ -655,7 +658,7 @@ fastvideo/train/
     optimizer.py              # Optimizer/scheduler construction
     checkpoint.py             # DCP save/resume
     dataloader.py             # Dataset/dataloader construction
-    tracking.py               # W&B tracker
+    tracking.py               # W&B / JSONL trackers
 ```
 
 ---
