@@ -1405,3 +1405,182 @@ Likely next fix to evaluate:
 - Keep terminal noising as an explicit behavior only under
   `noise_interval_mode: to_terminal`, or define a separate terminal weighting
   rule if terminal transitions are desired.
+
+## Terminal-Sigma Fix Execution
+
+Generated: 2026-07-01 after implementing the fake-score terminal-sigma fix.
+
+Live GitHub state was re-checked before the fix:
+
+- `gh auth status` reported active account `macthecadillac`.
+- Issue 775 is still open.
+- Current labels include `good first issue`, `contribution-needed`, `stale`,
+  and `keep-open`.
+- Assignee is now `macthecadillac`.
+- No new issue comments since the stale bot comment on 2026-05-31.
+- The open PR list still has no active PR directly targeting TDM or issue 775.
+
+Code change:
+
+- Commit: `ca6542544532e309740aa062997f9bdcad97f4a6`
+  (`[fix]: avoid terminal sigma in TDM separate noising`)
+- Branch pushed: `origin/issue/775-tdm`
+- Files changed:
+  - `fastvideo/train/methods/distribution_matching/tdm.py`
+  - `tests/local_tests/tdm/test_tdm_method_unit.py`
+
+Implementation details:
+
+- `noise_interval_mode: separate` now samples sources that have at least one
+  strictly larger non-terminal target sigma.
+- `separate` target candidates now require:
+
+  ```text
+  sigma_to > sigma_from + 1e-6
+  sigma_to < max_sigma - 1e-6
+  ```
+
+- If a separate schedule has no valid interior-to-interior interval, TDM raises:
+
+  ```text
+  TDM separate noise interval requires at least two non-terminal trajectory sigmas
+  ```
+
+- `noise_interval_mode: to_terminal` is unchanged and still targets the
+  max-sigma point explicitly.
+- Added fake-model tests:
+  - `test_tdm_separate_noise_interval_excludes_terminal_sigma`
+  - `test_tdm_to_terminal_noise_interval_targets_max_sigma`
+
+Local checks:
+
+```text
+python -m py_compile fastvideo/train/methods/distribution_matching/tdm.py \
+  tests/local_tests/tdm/test_tdm_method_unit.py
+```
+
+Result: passed.
+
+```text
+uvx pre-commit run --files fastvideo/train/methods/distribution_matching/tdm.py \
+  tests/local_tests/tdm/test_tdm_method_unit.py
+```
+
+Result:
+
+- `yapf`: passed
+- `ruff`: passed
+- `codespell`: passed
+- `PyMarkdown`: skipped, no files
+- `actionlint`: skipped, no files
+- filename check: passed
+- suggestion hook: passed
+- `mypy`: failed before type-checking with the known hyphenated worktree
+  package-name error:
+  `issue-775-tdm is not a valid Python package name`
+
+Direct mypy passed:
+
+```text
+uvx mypy --python-version 3.10 --follow-imports skip \
+  --disable-error-code union-attr --disable-error-code override \
+  --explicit-package-bases fastvideo/train/methods/distribution_matching/tdm.py
+```
+
+Modal L40S local-test smoke passed:
+
+```text
+Modal app: ap-0eJsVZUnedW5cBcSOkhO2x
+python -m modal run fastvideo/tests/modal/launch_l40s_job.py \
+  --gpu-type L40S \
+  --num-gpus 1 \
+  --install-extra test \
+  --git-commit ca6542544532e309740aa062997f9bdcad97f4a6 \
+  --command "pytest tests/local_tests/tdm/ -v -s"
+```
+
+Result:
+
+```text
+tests/local_tests/tdm/test_jsonl_tracker.py::test_jsonl_tracker_writes_metrics_artifacts_and_files PASSED
+tests/local_tests/tdm/test_tdm_config_smoke.py::test_tdm_wan_lora_config_resolves_without_loading_weights PASSED
+tests/local_tests/tdm/test_tdm_config_smoke.py::test_tdm_flow_bridge_smoke PASSED
+tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_single_train_step_reports_losses_and_routes_backward PASSED
+tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_respects_generator_update_interval PASSED
+tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_separate_noise_interval_excludes_terminal_sigma PASSED
+tests/local_tests/tdm/test_tdm_method_unit.py::test_tdm_to_terminal_noise_interval_targets_max_sigma PASSED
+tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_reconstructs_noisier_point_for_video_latents PASSED
+tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_transition_raises_for_lower_sigma_target PASSED
+tests/local_tests/tdm/test_tdm_scheduler_math.py::test_flow_effective_noise_and_snr_match_wan_parameterization PASSED
+10 passed, 14 warnings in 16.07s
+```
+
+Modal 20-step Wan TDM diagnostic passed:
+
+```text
+Modal app: ap-C7T7LCY4j0iGdCUigW85XX
+Output root: /root/data/tdm_diag_fake_score_fix_20_ca654254
+Command: torchrun --nproc_per_node=4 -m fastvideo.train.entrypoint.train \
+  --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
+  --training.data.data_path /root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset \
+  --training.loop.max_train_steps 20 \
+  --training.checkpoint.training_state_checkpointing_steps 0 \
+  --training.checkpoint.output_dir /root/data/tdm_diag_fake_score_fix_20_ca654254 \
+  --training.tracker.trackers [jsonl] \
+  --training.tracker.run_name tdm_diag_fake_score_fix_20 \
+  --callbacks.validation.every_steps 0
+Result: Training completed, commit_volume=True, exit code 0.
+```
+
+Downloaded metrics:
+
+```text
+modal volume get hf-model-weights \
+  tdm_diag_fake_score_fix_20_ca654254/tracker/metrics.jsonl \
+  /tmp/tdm_diag_fake_score_fix_20_ca654254_metrics.jsonl --force
+```
+
+Parsed metric summary:
+
+```text
+metric_rows: 64
+loss_step_count: 20
+loss_steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+update_steps: [5, 10, 15, 20]
+zero_fake_score_steps: []
+terminal_steps: []
+zero_snr_weight_steps: []
+zero_weight_steps: []
+nonfinite: []
+sigma_from_values: [0.25, 0.5]
+sigma_to_values: [0.5, 0.75]
+total_loss: min=0.0005264004576, mean=0.07027297739, max=0.4766705632
+fake_score_loss: min=0.0005264004576, mean=0.00133647426, max=0.001750704367
+generator_loss: min=0, mean=0.06893650442, max=0.474952668
+tdm/fake_score/per_sample_loss_mean: min=0.0005265791551, mean=0.00133637641, max=0.001751774456
+tdm/fake_score/snr_weight: min=1, mean=1, max=1
+tdm/fake_score/weight_mean: min=0.9993470907, mean=1.000157794, max=1.002144217
+tdm/fake_score/importance_mean: min=0.9993470907, mean=1.000157794, max=1.002144217
+step_time_sec: min=20.59477956, mean=27.32687902, max=48.55012608
+```
+
+Interpretation:
+
+- The fix removed the previous zero-loss failure mode in the real 20-step Wan
+  diagnostic.
+- `noise_interval_mode: separate` no longer sampled `sigma_to=1.0`.
+- All fake-score target sigmas were interior values: `0.5` or `0.75`.
+- `sigma_to_is_terminal`, `snr_weight == 0`, and final `weight_mean == 0` were
+  never observed.
+- `fake_score_loss` was finite and nonzero on all 20 loss steps.
+- `update_student` still matched `generator_update_interval=5`.
+
+Remaining TODO order after this fix:
+
+1. Decide whether `enable_gradient_in_rollout` should remain default `false`
+   or switch to `true` after memory and behavior are observed.
+2. Compare `student_sample_type: sde` versus `ode`; first config uses `sde`.
+3. Longer-term goals: validate TDM convergence, check whether the flow-matching
+   bridge behaves well in output quality, train and evaluate a useful
+   distilled adapter, and compare 4-step Wan output against DMD or
+   Self-Forcing baselines.
