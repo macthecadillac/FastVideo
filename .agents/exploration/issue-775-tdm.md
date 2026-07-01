@@ -357,3 +357,236 @@ Main risks:
 - TDM is more memory-expensive than DMD2 because each step may need student,
   teacher, and critic predictions on generated trajectory points. Start with
   LoRA and small validation cadence.
+
+## Flux2 PR 1349 Pattern Applied To TDM
+
+Generated: 2026-07-01 after inspecting merged PR #1349:
+https://github.com/hao-ai-lab/FastVideo/pull/1349
+
+What PR #1349 establishes as the local pattern:
+
+- A model/workload integration is not just code. It includes a reviewer-facing
+  local-test README, explicit reference assets, exact env vars, skip activation
+  commands, a component/test matrix, and Modal evidence.
+- Runtime code must be FastVideo-native. Third-party model classes belong in
+  tests or passthrough loaders only when intentionally documented.
+- Parity tests may skip in CI when weights/CUDA are absent, but the PR must
+  record non-skip Modal evidence before claiming correctness.
+- Shape-only tests are not enough. Flux2 replaced shape-only DiT checks with
+  strict tensor comparisons and pipeline latent parity.
+- The Flux2 PR decomposed coverage into:
+  - typed-surface/preflight tests;
+  - component parity;
+  - pipeline smoke;
+  - pipeline parity;
+  - example execution;
+  - CI quality placeholder/SSIM seeding follow-up.
+- Its `tests/local_tests/flux2/README.md` is the best template for TDM's local
+  evidence log.
+
+Important mismatch:
+
+- Flux2 is a model + pipeline port. TDM is a training/distillation method.
+  Therefore, copy the validation discipline, not the pipeline/component phases.
+  TDM should not add new inference registry/preset/pipeline code in the first
+  PR unless the scope changes.
+
+Detailed implementation plan:
+
+### Phase A: Setup And State Tracking
+
+1. Create a training-method local test area:
+   - `tests/local_tests/tdm/README.md`
+   - optionally `tests/local_tests/tdm/PORT_STATUS.md` if following the
+     add-model state-file convention for resumability.
+2. Use the Flux2 README layout:
+   - model family: `tdm`
+   - workload: training/distillation, first target `Wan2.1 T2V 1.3B`
+   - official reference: `https://github.com/Luo-Yihong/TDM`
+   - official reference file: `train_tdm_demo.py`
+   - reference status: single-script PixArt/diffusers algorithm reference
+   - source layout: `single_script_reference`
+   - first FastVideo target: Wan-native modular training method
+   - exact env vars for activated tests, e.g. `TDM_REF_DIR`,
+     `TDM_WAN_MODEL_DIR`, and token env var name only if needed.
+3. Clone the reference repo only for tests/review reproduction if needed.
+   Production code must not import from it.
+4. Add `.gitignore` entries only for staged reference/weight artifacts, not for
+   source files.
+
+### Phase B: Reference Decomposition
+
+Translate the official demo into named algorithm units before writing FastVideo
+code:
+
+1. `generate_new(...)`:
+   - Starts from pure noise.
+   - Runs the student for `K` denoising steps.
+   - Stores predicted clean latents and noised trajectory points.
+2. `Predictor.predict(...)`:
+   - Runs a score model at a noisy point.
+   - Applies optional classifier-free guidance.
+   - Converts predicted score/noise to predicted clean latent.
+3. `Predictor.add_noise(samples, noise, t1, t2)`:
+   - Adds additional noise from an intermediate timestep to a later/noisier
+     timestep.
+4. `Predictor.obtain_mixed_noise(...)`:
+   - Computes the effective mixed noise for the importance ratio.
+5. Fake-score update:
+   - Samples a trajectory point.
+   - Creates a noised generated latent.
+   - Trains fake-score model to predict the generated clean latent.
+   - Applies SNR clipping and importance weighting.
+6. Generator update:
+   - Queries teacher conditional/unconditional predictions and fake-score
+     prediction.
+   - Builds cooperative target:
+     `student_x0 + (teacher_cond - fake) + (cfg - 1) * (teacher_cond - teacher_uncond)`.
+   - Uses normalized MSE or Huber.
+
+Record these six units in `tests/local_tests/tdm/README.md` so reviewers can
+map code back to the reference script.
+
+### Phase C: FastVideo Method Implementation
+
+1. Add `fastvideo/train/methods/distribution_matching/tdm.py`.
+2. Prefer `class TDMMethod(DMD2Method)` but override `single_train_step`.
+   Reuse from `DMD2Method`:
+   - role validation (`student`, `teacher`, `critic`);
+   - CFG-uncond parsing;
+   - student/critic optimizer setup;
+   - optimizer/scheduler selection;
+   - backward routing convention using `_fv_backward`.
+3. Do not reuse DMD2's loss internals directly:
+   - replace `_critic_flow_matching_loss` with `_tdm_fake_score_loss`;
+   - replace `_dmd_loss` with `_tdm_generator_loss`;
+   - replace `_student_rollout` with trajectory-producing rollout context.
+4. Add helper dataclasses inside `tdm.py`:
+   - `TDMTrajectory`: generated clean latents, noisy trajectory points,
+     per-step timesteps/sigmas, selected index.
+   - `TDMSampleContext`: selected noisy input, `t_g`, `t_mid`, sampled fake
+     timestep, model prediction, random noise, mixed noise.
+5. Add method config parsing with explicit errors:
+   - `tdm_denoising_steps` (first PR fixed 4-step schedule);
+   - `generator_update_interval`;
+   - `real_score_guidance_scale` or `cfg`;
+   - `fake_score_learning_rate`, `fake_score_betas`,
+     `fake_score_lr_scheduler`;
+   - `noise_interval_mode`: `separate` or `to_terminal`;
+   - `use_randmid`;
+   - `use_huber`, `huber_c`;
+   - `snr_clip`, default matching the reference's `5`.
+6. Export the method:
+   - `fastvideo/train/methods/distribution_matching/__init__.py`
+   - `fastvideo/train/methods/__init__.py`
+
+### Phase D: Scheduler Translation
+
+This is the highest-risk part.
+
+Reference DDPM formula uses alpha/sigma. Wan `FlowMatchEulerDiscreteScheduler`
+uses:
+
+```text
+x_t = (1 - sigma_t) * x0 + sigma_t * eps
+```
+
+Implement a flow-matching equivalent of reference
+`Predictor.add_noise(samples, noise, t1, t2)`:
+
+```text
+x_t1 = (1 - s1) * x0 + s1 * eps_model
+x_t2 = ((1 - s2) / (1 - s1)) * x_t1 + beta * eps_rand
+beta = sqrt(s2^2 - (((1 - s2) / (1 - s1)) * s1)^2)
+mixed_eps = ((((1 - s2) / (1 - s1)) * s1) * eps_model + beta * eps_rand) / s2
+```
+
+Guardrails:
+
+- Only sample intervals where `s2 >= s1`; otherwise `beta` becomes invalid.
+- Clamp tiny negative values before `sqrt` only when within numerical epsilon;
+  treat larger negatives as a bug.
+- Support `[B, T, C, H, W]` by flattening/unflattening the same way
+  `ModelBase.predict_x0` does.
+- Unit-test the formula with fake sigmas before any Wan run.
+
+### Phase E: Training Config And Docs
+
+1. Add example config:
+   `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`.
+2. First config should be LoRA-first:
+   - `models.student.lora.enable: true`
+   - explicit rank/alpha/target modules
+   - teacher and critic initialized from the same Wan checkpoint; teacher frozen.
+3. Use text-only/data-free prompt data if available. If existing text-only DMD
+   data paths are used, document the exact expected preprocessing.
+4. Add a section to `docs/training/train_infra.md` next to DMD2 and
+   Self-Forcing:
+   - what TDM does;
+   - required roles;
+   - key method knobs;
+   - known limitation: first implementation is Wan-native, not official
+     CogVideoX LoRA inference support.
+
+### Phase F: Tests, Flux2-Style
+
+Add tests before Modal validation:
+
+1. `tests/local_tests/tdm/test_tdm_scheduler_math.py`
+   - fake scheduler with known sigmas;
+   - between-timestep noising produces finite tensors;
+   - mixed noise reconstructs `x_t2`;
+   - invalid interval raises.
+2. `tests/local_tests/tdm/test_tdm_method_unit.py`
+   - fake role models implementing `prepare_batch`, `add_noise`,
+     `predict_noise`, `predict_x0`, and `backward`;
+   - checks loss-map keys:
+     `total_loss`, `generator_loss`, `fake_score_loss`;
+   - checks critic backward every step and student backward only on
+     `generator_update_interval`;
+   - checks deterministic timestep sampling with `cuda_generator`.
+3. `tests/local_tests/tdm/test_tdm_reference_math.py`
+   - optional CPU-only parity against a minimal extracted version of the
+     reference demo formulas using tiny tensors;
+   - this is the closest analog to Flux2 component parity for a method.
+4. `tests/local_tests/tdm/README.md`
+   - copy Flux2's evidence style: commands, skip conditions, status table,
+     Modal run IDs, and exact blockers.
+5. Avoid package-level CI quality tests until there is a stable trained TDM
+   artifact or a clear regression metric. A placeholder is acceptable only if it
+   names the seeding/validation workflow and does not pretend to pass.
+
+### Phase G: Modal Validation
+
+Follow Flux2's evidence standard:
+
+1. Modal preflight:
+   - import `TDMMethod`;
+   - build config from `tdm_t2v_lora.yaml`;
+   - instantiate role models enough to catch target/config errors.
+2. Modal unit/local tests:
+   - run `tests/local_tests/tdm/` on L40S.
+3. Short training smoke:
+   - tiny prompt set;
+   - low max steps, e.g. 2-10;
+   - `output_type=latent` validation if using a validation callback;
+   - verify no NaNs and expected loss keys log.
+4. Training sanity:
+   - record `loss_score` / fake-score loss and generator loss magnitudes;
+   - compare to DMD2 only as a sanity baseline, not as parity.
+5. Optional quality probe:
+   - generate a few 4-step samples from the trained LoRA checkpoint;
+   - record videos/latents as artifacts, but do not claim quality until reviewed.
+
+### Phase H: Review Checklist Before PR
+
+- No runtime imports from the TDM reference repo.
+- No diffusers/transformers model-class imports in production training code.
+- All randomness uses `TrainingMethod.cuda_generator`.
+- Method knobs live under `method`, not model config.
+- Flow-matching scheduler math has isolated tests.
+- `tests/local_tests/tdm/README.md` has activated Modal evidence, not only skip
+  commands.
+- Handoff/README explicitly says this is a Wan adaptation of TDM, not an exact
+  CogVideoX checkpoint port.
+- Pre-commit is run on changed files before committing.
