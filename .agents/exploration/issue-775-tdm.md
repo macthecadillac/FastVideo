@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 after user visual review of prompt 0 comparison
+Last updated: 2026-07-02 after live step-200 high-step student diagnostic
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -16,7 +16,7 @@ handoff keeps only state needed to continue work.
   on branch `interleavethinker`
 - Handoff: `.agents/exploration/issue-775-tdm.md`
 - Latest pushed issue-branch commit before this handoff update:
-  `ea7e8704` `[misc]: record TDM 200-step pilot`
+  `a0a4f93a` `[misc]: record TDM visual review`
 
 ## GitHub State
 
@@ -109,6 +109,8 @@ Implemented behavior:
 - `008883d9` `[misc]: record TDM ode rollout diagnostic`
 - `4e7d9e76` `[misc]: compact TDM handoff and pilot plan`
 - `ea7e8704` `[misc]: record TDM 200-step pilot`
+- `13d76da9` `[misc]: record TDM teacher comparison artifact`
+- `a0a4f93a` `[misc]: record TDM visual review`
 
 ## Validation Summary
 
@@ -274,6 +276,89 @@ Prompt 0 teacher/student comparison:
     spending on a much longer run, first distinguish expected 4-step base blur
     from an integration/validation issue.
 
+Prompt 0 targeted blur diagnostics:
+
+- Base Wan 4-step DMD baseline:
+  - First attempt app `ap-AD8N2PjcdD064G53krRQZb` failed before model code
+    because Modal could not check out newest handoff-only commit `a0a4f93a`
+    (`fatal: reference is not a tree`). Code diagnostics therefore used
+    known-visible code commit `ea7e8704`; production code was unchanged between
+    those commits.
+  - Successful app: `ap-w5GquHcspYVAYi3QadKluL`
+  - Commit: `ea7e8704502aaa0485aa9dba921416c66c1542b6`
+  - Pipeline: `WanDMDPipeline`
+  - Settings: same prompt, seed `1000`, `448x832`, `77` frames, `fps=16`,
+    `guidance_scale=6.0`, `embedded_cfg_scale=6.0`, `flow_shift=8.0`,
+    `num_inference_steps=4`,
+    `dmd_denoising_steps=[1000,750,500,250]`.
+  - Modal output:
+    `/root/data/issue_775_tdm_prompt0_compare/base_dmd_4step/base_wan_dmd_4steps_seed1000_prompt0.mp4`
+  - Local output:
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/prompt0_teacher_student_compare/base_dmd_4step/base_dmd_4step/base_wan_dmd_4steps_seed1000_prompt0.mp4`
+  - Visual/stat result: base Wan 4-step DMD is also heavily blurred.
+- DCP export / normal inference loader probe:
+  - App: `ap-WxB3oDIhzdiRT8PCK7DjRZ`
+  - `dcp_to_diffusers` successfully exported the step-200 student transformer
+    to
+    `/root/data/issue_775_tdm_prompt0_compare/student_step200_diffusers`,
+    but normal `VideoGenerator.from_pretrained(export_path, ...)` failed
+    because `model_index.json` was a broken symlink. Probe app
+    `ap-jyjjWsfqEaM9Q9IZOqbxEx` confirmed `Path.exists() == False` for that
+    symlink even though the name appeared in directory listings. Root cause:
+    the converter copies HF snapshot files with `symlinks=True`, preserving
+    links to blobs outside the export root.
+  - A follow-up attempt to load the exported student transformer through
+    `init_weights_from_safetensors` failed in app `ap-3gQijLcOOHmKJrx251E0IV`
+    with missing normal-loader key
+    `blocks.0.attn2.to_k.base_layer.bias`. The exported state still contains
+    LoRA-wrapper key structure and is not directly loadable by standard
+    inference without a LoRA merge/export path.
+- Live training-module high-step validation:
+  - Temporary diagnostic script:
+    `scripts/diagnostics/tdm_resume_validate.py`, applied to Modal with
+    `--apply-local-patch`; this script was only for the diagnostic and is not
+    intended to remain in the final branch.
+  - App: `ap-Tqz1iA99t1AO6Lwr7ztDpE`
+  - Commit: `ea7e8704502aaa0485aa9dba921416c66c1542b6` plus the temporary
+    local diagnostic script patch.
+  - Command:
+    `torchrun --standalone --nproc_per_node=4 scripts/diagnostics/tdm_resume_validate.py --checkpoint /root/data/tdm_pilot_sde_200_4e7d9e76/checkpoint-200 --output-dir /root/data/issue_775_tdm_prompt0_compare/student_step200_live_wan_50step --inference-steps 50`
+  - Result: completed successfully on 4x L40S. The checkpoint resumed at step
+    `200`, EMA callback initialized/restored, validation offloaded optimizer
+    state plus teacher/critic transformers, and the normal `WanPipeline` used
+    the already-provided live student transformer for a 50-step sample.
+  - Modal output:
+    `/root/data/issue_775_tdm_prompt0_compare/student_step200_live_wan_50step`
+  - Local output:
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/prompt0_teacher_student_compare/student_step200_live_wan_50step/`
+  - Downloaded MP4s:
+    `validation/validation_step_200_inference_steps_50_video_0.mp4` through
+    `video_3.mp4`. The four copies are expected because the single validation
+    prompt was padded across four SP groups; use `video_0` as the canonical
+    comparison file.
+  - OpenCV metadata for `video_0`: opened successfully, `77` frames, `16`
+    fps, `832x448`. First-frame stats: mean `84.0549`, std `88.2849`.
+  - Comparison stats from the same OpenCV probe:
+    - Teacher 50-step first frame: mean `85.0922`, std `88.6851`
+    - TDM step-200 4-step first frame: mean `63.6605`, std `16.8114`
+    - Base Wan DMD 4-step first frame: mean `63.4405`, std `16.6299`
+  - Representative contact sheet:
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/prompt0_teacher_student_compare/thumbnails/prompt0_frame38_contact_sheet.png`
+  - Visual result: teacher 50-step and live step-200 student sampled at 50
+    steps are both vivid and prompt-conditioned. Base Wan 4-step DMD and TDM
+    step-200 4-step are both blurred/frosted.
+- Current interpretation:
+  - The step-200 student checkpoint and live validation/EMA application are
+    not globally broken; when sampled with normal 50-step Wan, the live
+    student still produces a clear prompt-conditioned video.
+  - The observed failure is concentrated in the aggressive 4-step DMD/TDM
+    trajectory. The 200-step pilot did not visibly improve over the blurred
+    base 4-step DMD baseline, which is plausible with only about 40 generator
+    updates but is not convergence evidence.
+  - Separate cleanup is needed for `dcp_to_diffusers`: copied HF snapshot
+    symlinks should be materialized, and exported LoRA-wrapped student weights
+    need a merge/export path before normal inference can load them.
+
 ## Modal Data And Weights
 
 Wan weights in Modal volume:
@@ -306,6 +391,11 @@ Dataset summary from earlier Modal runs:
 - Video frame count and resolution match the Wan validation config: passed.
 - Pixel statistics are not constant/all-black/all-white/corrupt: passed.
 - DCP checkpoint directories exist for expected saved steps: passed.
+- Base Wan 4-step DMD baseline for prompt 0 was generated: passed.
+- Live step-200 student resumed and sampled with normal 50-step Wan validation:
+  passed.
+- Live 50-step student output is clear/prompt-conditioned while 4-step base and
+  4-step TDM outputs are blurred: passed.
 
 What this still will not prove:
 
@@ -316,17 +406,18 @@ What this still will not prove:
 
 ## Current Remaining Work
 
-1. Do not assume the next best step is a longer run. First run targeted
-   diagnostics to explain the heavy blur:
-   - generate the same prompt with base Wan through the same 4-step DMD
-     validation path to establish the expected untrained baseline;
-   - generate the same prompt with the step-200 student/EMA weights using a
-     higher-step normal Wan path if the checkpoint format makes that practical;
-   - inspect whether validation is actually applying trained/EMA LoRA weights.
-2. If diagnostics show this is expected early-training behavior, run the next
-   longer pilot. If they show the validation output is not using the trained
-   student correctly, fix that first.
-3. Decide whether the duplicate final `checkpoint-200` save is acceptable as
+1. Decide the next training diagnostic budget. The current evidence supports
+   running a longer pilot only as a 4-step-convergence check, not to debug
+   checkpoint loading or EMA application.
+2. If running longer, keep the same prompt 0 comparison workflow:
+   teacher 50-step, base Wan DMD 4-step, TDM student 4-step at checkpoints, and
+   optional live-student 50-step spot checks. The expected success signal is
+   that TDM 4-step starts gaining contrast/detail and prompt-conditioned
+   objects relative to the blurred base 4-step DMD baseline.
+3. Fix or defer `dcp_to_diffusers` export limitations:
+   materialize copied HF symlinks and add a LoRA merge/export path so normal
+   inference can load a DCP-exported TDM student.
+4. Decide whether the duplicate final `checkpoint-200` save is acceptable as
    existing trainer behavior or should be cleaned up before PR.
-4. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
+5. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
    draft PR only if explicitly requested.
