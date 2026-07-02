@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 during resumed interval-1 run
+Last updated: 2026-07-02 after interval-1 validation-enabled repro completed
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -16,7 +16,7 @@ handoff keeps only state needed to continue work.
   on branch `interleavethinker`
 - Handoff: `.agents/exploration/issue-775-tdm.md`
 - Latest pushed issue-branch commit before this handoff update:
-  `a0a4f93a` `[misc]: record TDM visual review`
+  `946ddcad` `[debug]: update validation repro progress`
 
 ## GitHub State
 
@@ -111,6 +111,10 @@ Implemented behavior:
 - `ea7e8704` `[misc]: record TDM 200-step pilot`
 - `13d76da9` `[misc]: record TDM teacher comparison artifact`
 - `a0a4f93a` `[misc]: record TDM visual review`
+- `e574a636` `[debug]: instrument gradient clipping for TDM hang`
+- `3550048b` `[debug]: log grad clip diagnostics from all ranks`
+- `9fdd20cb` `[debug]: record interval-1 control diagnostic`
+- `946ddcad` `[debug]: update validation repro progress`
 
 ## Validation Summary
 
@@ -397,9 +401,9 @@ Dataset summary from earlier Modal runs:
 - Live 50-step student output is clear/prompt-conditioned while 4-step base and
   4-step TDM outputs are blurred: passed.
 
-## Active Diagnostic Plan
+## Interval-1 Diagnostic State
 
-Next run: interval-1 student-update diagnostic for the same Wan TDM LoRA setup.
+Primary interval-1 student-update diagnostic for the same Wan TDM LoRA setup:
 
 - Rationale: the 200-step SDE pilot used `generator_update_interval=5`, so it
   produced only about 40 student/generator updates. The critic was healthy and
@@ -544,17 +548,20 @@ What this still will not prove:
 
 ## Current Remaining Work
 
-1. Investigate the interval-1 hang before running a longer interval-1 pilot.
-   The hang occurred after logging step-193 student grad and before the
-   step-193 critic/loss/EMA rows, so the most likely debugging surface is the
-   critic-side backward/optimizer/distributed synchronization path rather than
-   data loading or validation.
+1. Treat the interval-1 hang as bounded but not root-caused.
+   The original stopped run was initially misread from the local stream as
+   hanging after step-193 student grad and before the critic/loss/EMA rows.
+   The downloaded durable JSONL later corrected this: step `193` completed all
+   row groups, so the actual stalled interval was after step `193` completed
+   and before step `194` completed.
    - 2026-07-02 continuation: code inspection narrowed the exact sequence.
      `grad_norm/*` rows are produced by `GradNormClipCallback` after method
      backward and before optimizer stepping. The JSONL tracker writes and
      flushes the row before logging `JSONL tracker step=...`, so the persisted
-     step-193 `grad_norm/student` row means student clipping and tracker write
-     completed. The next operation is critic gradient clipping.
+     rows are more authoritative than the possibly truncated local stream.
+     This motivated the all-rank grad-clip instrumentation; after the durable
+     tracker correction, that instrumentation still served to rule out
+     step-188..195 grad clipping as the deterministic hang point.
    - Added gated callback instrumentation in
      `fastvideo/train/callbacks/grad_clip.py`: `debug_log` plus
      `debug_log_steps`. With default values off, training behavior is
@@ -603,22 +610,48 @@ What this still will not prove:
      appeared to stop after `grad_norm/student`, but the durable JSONL shows
      step `193` completed. The actual stalled interval was after step `193`
      completed and before step `194` completed.
-   - Active validation-enabled repro: app `ap-4cK2vOsPqcQFNrdO6RbPGy`,
+   - Validation-enabled repro: app `ap-4cK2vOsPqcQFNrdO6RbPGy`,
      commit `9fdd20cb7f9de5192eafaa979139aca5bd630b4f`, output root
      `/root/data/tdm_debug_interval1_validation_195_9fdd20cb`. This run keeps
      checkpoint saves disabled but re-enables resume-time validation every
      `100` steps with `offload_training_state=true` and
      `unload_pipeline_after_validation=true`, matching the original
-     interval-1 resume's validation behavior. Observed so far: checkpoint-100
-     loaded, validation offloaded optimizer state plus teacher/critic,
-     generated validation videos, restored teacher/critic and optimizer state,
-     restored RNG snapshot, then resumed training. Latest observed status:
-     steps `101..150` completed with student-grad, critic-grad, loss, and EMA
-     rows. Continue monitoring toward steps `188..195`.
+     interval-1 resume's validation behavior. Checkpoint-100 loaded,
+     validation offloaded optimizer state plus teacher/critic, generated
+     validation videos, restored teacher/critic and optimizer state, restored
+     RNG snapshot, then resumed training.
+   - Result: the validation-enabled repro completed through step `195` and
+     exited normally. Final stream logs showed `Training completed`; the only
+     exit warnings were the known non-fatal NCCL
+     `destroy_process_group()` warnings. Modal volume commit completed.
+   - Persisted tracker:
+     `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_debug_interval1_validation_195_9fdd20cb/metrics.jsonl`.
+     Summary: `380` JSONL rows; steps `101..195` (`95` unique steps);
+     row classes exactly `95` student-grad, `95` critic-grad, `95` loss,
+     and `95` EMA rows; missing row groups `0`; nonfinite scalar metrics `0`.
+     Scalar ranges: `total_loss` min `0.2086594701`, max `0.9251267314`,
+     first `0.3952918947`, last `0.4792018533`; `generator_loss` min
+     `0.2075745016`, max `0.9240081310`, first `0.3937318325`, last
+     `0.4786063731`; `fake_score_loss` min `0.0004030296`, max
+     `0.0016201866`, first `0.0015600767`, last `0.0005954780`;
+     `step_time_sec` min `49.8671393080`, max `64.2654010900`, first
+     `64.2654010900`, last `49.9735227220`.
+   - Debug-window stream evidence for steps `188..195`: all ranks emitted
+     begin/end grad-clip logs for both student and critic; all logged gradient
+     tensors were `DTensor`, dtype `torch.float32`, on the expected
+     `cuda:0..3` devices; student clipping returned in about `0.13..0.14s`
+     and critic clipping returned in about `0.03..0.04s`. Step `193` and
+     step `194` both completed all tracker rows. Therefore the interval-1
+     issue is not reproduced by either the validation-free control or the
+     validation-enabled/no-checkpoint control.
 2. Decide the next training diagnostic budget. The current evidence supports
-   running a longer pilot only as a 4-step-convergence check, not to debug
-   checkpoint loading or EMA application, but the interval-1 hang must be
-   addressed or bounded first.
+   treating the original interval-1 stop as either transient Modal/container
+   behavior or a difference in the full original resume command not covered by
+   the two controls. The strongest remaining repro check is a full original
+   resume-to-200 run from `checkpoint-100` with checkpoint saves enabled and
+   validation enabled. If that completes, proceed to the longer interval-1
+   convergence pilot; if it hangs, add broader per-step debug logs around
+   step `194` beyond grad clipping.
 3. If running longer, keep the same prompt 0 comparison workflow:
    teacher 50-step, base Wan DMD 4-step, TDM student 4-step at checkpoints, and
    optional live-student 50-step spot checks. The expected success signal is
