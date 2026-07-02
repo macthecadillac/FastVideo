@@ -501,6 +501,9 @@ Interval-1 run status:
   - The app was stopped manually with
     `uvx modal app stop ap-XVo1dVzlskj0Bs1UUMNbvH --yes`; the local launcher
     then exited with Modal `RemoteError` caused by "user stopped from CLI".
+    After two stop commands, `uvx modal app list` still showed this app in
+    `stopping...` state with one task, so Modal may take additional time to
+    tear down the deadlocked container.
   - Post-stop Modal volume listing confirmed only these durable artifacts:
     `checkpoint-100`, `tracker`, and the eight validation videos for steps
     `0` and `100`. There is still no `checkpoint-200` or step-200 validation.
