@@ -546,6 +546,30 @@ What this still will not prove:
    step-193 critic/loss/EMA rows, so the most likely debugging surface is the
    critic-side backward/optimizer/distributed synchronization path rather than
    data loading or validation.
+   - 2026-07-02 continuation: code inspection narrowed the exact sequence.
+     `grad_norm/*` rows are produced by `GradNormClipCallback` after method
+     backward and before optimizer stepping. The JSONL tracker writes and
+     flushes the row before logging `JSONL tracker step=...`, so the persisted
+     step-193 `grad_norm/student` row means student clipping and tracker write
+     completed. The next operation is critic gradient clipping.
+   - Added gated callback instrumentation in
+     `fastvideo/train/callbacks/grad_clip.py`: `debug_log` plus
+     `debug_log_steps`. With default values off, training behavior is
+     unchanged. When enabled, every rank logs begin/end for each role's grad
+     clip, local parameter/gradient counts, gradient tensor types/dtypes/
+     devices, elapsed time, and returned norm.
+   - Local non-test checks for this instrumentation: `python3 -m py_compile
+     fastvideo/train/callbacks/grad_clip.py`, `git diff --check`,
+     `uvx pre-commit run --files fastvideo/train/callbacks/grad_clip.py`
+     (yapf reformatted; mypy hook failed before checking due to the known
+     invalid worktree package name `issue-775-tdm`), and direct
+     `uvx mypy --explicit-package-bases fastvideo/train/callbacks/grad_clip.py`
+     passed.
+   - Next Modal diagnostic: run from `checkpoint-100` with
+     `generator_update_interval=1`, validation/checkpoint saving disabled,
+     and `callbacks.grad_clip.debug_log=true` focused around steps `188..195`.
+     If it hangs again, the last debug line should identify whether all ranks
+     entered critic clipping and which phase failed to return.
 2. Decide the next training diagnostic budget. The current evidence supports
    running a longer pilot only as a 4-step-convergence check, not to debug
    checkpoint loading or EMA application, but the interval-1 hang must be
