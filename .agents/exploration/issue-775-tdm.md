@@ -603,6 +603,18 @@ What this still will not prove:
      appeared to stop after `grad_norm/student`, but the durable JSONL shows
      step `193` completed. The actual stalled interval was after step `193`
      completed and before step `194` completed.
+   - Active validation-enabled repro: app `ap-4cK2vOsPqcQFNrdO6RbPGy`,
+     commit `9fdd20cb7f9de5192eafaa979139aca5bd630b4f`, output root
+     `/root/data/tdm_debug_interval1_validation_195_9fdd20cb`. This run keeps
+     checkpoint saves disabled but re-enables resume-time validation every
+     `100` steps with `offload_training_state=true` and
+     `unload_pipeline_after_validation=true`, matching the original
+     interval-1 resume's validation behavior. Observed so far: checkpoint-100
+     loaded, validation offloaded optimizer state plus teacher/critic,
+     generated validation videos, restored teacher/critic and optimizer state,
+     restored RNG snapshot, then completed step `101` with student-grad,
+     critic-grad, loss, and EMA rows. Continue monitoring toward steps
+     `188..195`.
 2. Decide the next training diagnostic budget. The current evidence supports
    running a longer pilot only as a 4-step-convergence check, not to debug
    checkpoint loading or EMA application, but the interval-1 hang must be
