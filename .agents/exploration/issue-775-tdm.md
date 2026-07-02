@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 after interrupted interval-1 run
+Last updated: 2026-07-02 during resumed interval-1 run
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -472,6 +472,18 @@ Interval-1 run status:
     same output root, and `max_train_steps=200`.
   - After completion, download tracker plus validation MP4s and compare prompt
     0 against teacher/base-DMD/interval-5 artifacts.
+- Resume status:
+  - Resume app `ap-XVo1dVzlskj0Bs1UUMNbvH` launched from branch
+    `issue/775-tdm` using commit
+    `ea7e8704502aaa0485aa9dba921416c66c1542b6`.
+  - The resumed job loaded
+    `/root/data/tdm_pilot_sde_200_interval1_35888898_dataset/checkpoint-100`
+    and logged `Checkpoint loaded; resuming from step=100`.
+  - It reran step-100 validation after restore, restored optimizer/teacher/
+    critic state, then resumed training past the previous interrupted point.
+  - As of 2026-07-02 07:47 UTC, logs reached step `150`; each resumed step
+    has logged student and critic gradients plus `update_student`, confirming
+    `generator_update_interval=1` remains active.
 
 What this still will not prove:
 
