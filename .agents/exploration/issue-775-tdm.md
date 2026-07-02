@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 after generating a Wan teacher baseline for prompt 0
+Last updated: 2026-07-02 after user visual review of prompt 0 comparison
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -258,6 +258,21 @@ Prompt 0 teacher/student comparison:
   different sampler trajectories, so they are not expected to be pixel-matched.
   Local `ffprobe` failed to initialize the H.264 decoder in this environment,
   but the Modal log confirms the teacher MP4 was generated, decoded, and saved.
+- User visual assessment:
+  - Teacher output is imperfect but clearly conditioned by the prompt, vivid,
+    and detailed.
+  - TDM student output does not get visibly worse from `step0` to `step100`
+    to `step200`.
+  - TDM student output remains extremely blurred at all inspected steps, with
+    no identifiable objects; user described it as if the teacher output were
+    seen through heavily frosted glass.
+- Interpretation:
+  - This does not prove numerical failure because an untrained/base Wan model
+    sampled with the aggressive 4-step DMD schedule can be very blurry, and the
+    200-step pilot contains only about 40 student/generator updates.
+  - It does mean the pilot has not shown qualitative learning yet. Before
+    spending on a much longer run, first distinguish expected 4-step base blur
+    from an integration/validation issue.
 
 ## Modal Data And Weights
 
@@ -301,12 +316,16 @@ What this still will not prove:
 
 ## Current Remaining Work
 
-1. User visual review of the prompt 0 comparison folder. Compare the 50-step
-   Wan teacher against the TDM 4-step `step200` output, and also check
-   `step000 -> step100 -> step200` for collapse, flicker, static frames,
-   severe artifacts, or prompt drift.
-2. Based on visual review, decide whether a 500-step run or baseline
-   DMD/Self-Forcing comparison is warranted.
+1. Do not assume the next best step is a longer run. First run targeted
+   diagnostics to explain the heavy blur:
+   - generate the same prompt with base Wan through the same 4-step DMD
+     validation path to establish the expected untrained baseline;
+   - generate the same prompt with the step-200 student/EMA weights using a
+     higher-step normal Wan path if the checkpoint format makes that practical;
+   - inspect whether validation is actually applying trained/EMA LoRA weights.
+2. If diagnostics show this is expected early-training behavior, run the next
+   longer pilot. If they show the validation output is not using the trained
+   student correctly, fix that first.
 3. Decide whether the duplicate final `checkpoint-200` save is acceptable as
    existing trainer behavior or should be cleaned up before PR.
 4. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
