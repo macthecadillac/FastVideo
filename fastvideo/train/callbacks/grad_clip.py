@@ -125,6 +125,7 @@ class GradNormClipCallback(Callback):
             grad_devices,
             grad_norm,
             elapsed_sec,
+            local_main_process_only=False,
         )
 
     @staticmethod

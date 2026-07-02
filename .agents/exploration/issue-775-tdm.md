@@ -570,6 +570,13 @@ What this still will not prove:
      and `callbacks.grad_clip.debug_log=true` focused around steps `188..195`.
      If it hangs again, the last debug line should identify whether all ranks
      entered critic clipping and which phase failed to return.
+   - First attempted debug Modal app `ap-Km1HANsi5SYrfaretqn4h7` was stopped
+     during startup before training because the initial instrumentation used
+     the default FastVideo logger behavior, which only logs from local rank 0.
+     Patched the debug logger call to pass `local_main_process_only=False` so
+     all ranks emit grad-clip begin/end lines. The stop produced the expected
+     Modal `RemoteError`/SIGINT logs while the T5 encoder was loading; no
+     training-step evidence came from that app.
 2. Decide the next training diagnostic budget. The current evidence supports
    running a longer pilot only as a 4-step-convergence check, not to debug
    checkpoint loading or EMA application, but the interval-1 hang must be
