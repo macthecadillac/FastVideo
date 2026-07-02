@@ -484,6 +484,20 @@ Interval-1 run status:
   - As of 2026-07-02 07:47 UTC, logs reached step `150`; each resumed step
     has logged student and critic gradients plus `update_student`, confirming
     `generator_update_interval=1` remains active.
+  - The resumed job later advanced normally through step `192`. At
+    `2026-07-02 08:15:07 UTC`, step `193` logged only
+    `grad_norm/student`; no `grad_norm/critic`, loss row, EMA row, progress-bar
+    advance, checkpoint, validation, or process-exit logs followed for several
+    minutes.
+  - Independent `uvx modal app logs ap-XVo1dVzlskj0Bs1UUMNbvH` checks matched
+    the local stream: stdout stopped at the step-193 student-gradient line and
+    stderr showed only progress-bar output through step `192`. `uvx modal app
+    list` still showed the app as active with one task, so this appears to be
+    an in-step hang/deadlock rather than a completed or failed run.
+  - No step-200 checkpoint or validation artifacts are expected from this app
+    unless the hang unexpectedly resolves before it is stopped. The last
+    committed durable artifacts remain `checkpoint-100`, tracker, and
+    validation MP4s for steps `0` and `100`.
 
 What this still will not prove:
 
