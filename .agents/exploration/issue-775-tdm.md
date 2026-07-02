@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-01 after the 200-step SDE pilot
+Last updated: 2026-07-02 after generating a Wan teacher baseline for prompt 0
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -15,12 +15,12 @@ handoff keeps only state needed to continue work.
 - Modal launcher worktree: `/tmp/fastvideo-worktrees/interleavethinker-modal`
   on branch `interleavethinker`
 - Handoff: `.agents/exploration/issue-775-tdm.md`
-- Latest pushed issue-branch commit before the 200-step pilot:
-  `4e7d9e76` `[misc]: compact TDM handoff and pilot plan`
+- Latest pushed issue-branch commit before this handoff update:
+  `ea7e8704` `[misc]: record TDM 200-step pilot`
 
 ## GitHub State
 
-Last checked: 2026-07-01 with `gh` authenticated as `macthecadillac`.
+Last checked: 2026-07-02 with `gh` authenticated as `macthecadillac`.
 
 - Issue: https://github.com/hao-ai-lab/FastVideo/issues/775
 - Title: `[Feature] TDM`
@@ -108,6 +108,7 @@ Implemented behavior:
 - `1afc867c` `[fix]: remove TDM rollout gradient option`
 - `008883d9` `[misc]: record TDM ode rollout diagnostic`
 - `4e7d9e76` `[misc]: compact TDM handoff and pilot plan`
+- `ea7e8704` `[misc]: record TDM 200-step pilot`
 
 ## Validation Summary
 
@@ -209,12 +210,54 @@ Current config decision:
 - Validation artifacts:
   - 12 MP4s exist: four each at steps `0`, `100`, and `200`.
   - Downloaded to
-    `/tmp/tdm_pilot_sde_200_4e7d9e76_validation_named/`.
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_pilot_sde_200_4e7d9e76_validation_named/`
+    after the 2026-07-02 restart wiped `/tmp`.
   - All 12 decoded with temporary `imageio`/`imageio-ffmpeg` tooling as
     `(77, 448, 832, 3)` `uint8`.
   - All basic non-blank checks passed: pixel std range
     `11.896296..39.797680`; first-vs-last frame absolute mean delta range
     `1.095667..4.911918`.
+
+Prompt 0 teacher/student comparison:
+
+- User asked for both the Wan teacher output and TDM student outputs for one
+  prompt, plus the prompt text, for visual inspection.
+- Chosen prompt index: `0` from
+  `examples/training/finetune/Wan2.1-VSA/Wan-Syn-Data/validation_4.json`.
+- Prompt text:
+
+  ```text
+  In the video, a woman is elegantly showcasing her earrings, bringing attention to their intricate design with a gentle touch of her fingers. She is bathed in ambient purple and pink lighting, which casts a soft glow on her delicate features and enhances the vivid tones of her lipstick and eye makeup. Her hair is styled to frame her face smoothly, emphasizing the contours of her jawline and cheekbones. The background features a blurred neon light, adding an artistic and modern touch to the overall aesthetic.
+  ```
+
+- Teacher generation Modal app: `ap-wVSQpGeoOvGexEGqkzn4hv`
+- Teacher output root in Modal volume:
+  `/root/data/issue_775_tdm_prompt0_compare`
+- Teacher settings:
+  - Model: `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`
+  - Pipeline: normal `WanPipeline`
+  - Inference steps: `50`
+  - Seed: `1000`
+  - Resolution: `448x832`
+  - Frames/FPS: `77` / `16`
+  - Guidance scale: `6.0`
+  - Flow shift: `8.0`
+  - Logged generation time: `216.996s`; e2e latency `219.733s`
+  - Peak memory: `14352.989 MB`
+- Local assembled comparison folder:
+  `/home/toolbox/FastVideo/outputs/issue-775-tdm/prompt0_teacher_student_compare/`
+- Files in the comparison folder:
+  - `teacher/issue_775_tdm_prompt0_compare/wan_teacher_50_steps_seed1000_prompt0.mp4`
+  - `teacher/issue_775_tdm_prompt0_compare/wan_teacher_50_steps_seed1000_prompt0.json`
+  - `teacher/issue_775_tdm_prompt0_compare/prompt0.txt`
+  - `tdm_student_4step/tdm_student_step000_4steps_seed1000_prompt0.mp4`
+  - `tdm_student_4step/tdm_student_step100_4steps_seed1000_prompt0.mp4`
+  - `tdm_student_4step/tdm_student_step200_4steps_seed1000_prompt0.mp4`
+  - `README.md`
+- Note: these are qualitative artifacts. The teacher and TDM student use
+  different sampler trajectories, so they are not expected to be pixel-matched.
+  Local `ffprobe` failed to initialize the H.264 decoder in this environment,
+  but the Modal log confirms the teacher MP4 was generated, decoded, and saved.
 
 ## Modal Data And Weights
 
@@ -258,9 +301,13 @@ What this still will not prove:
 
 ## Current Remaining Work
 
-1. Compare validation artifacts visually and decide whether a
-   500-step run or baseline DMD/Self-Forcing comparison is warranted.
-2. Decide whether the duplicate final `checkpoint-200` save is acceptable as
+1. User visual review of the prompt 0 comparison folder. Compare the 50-step
+   Wan teacher against the TDM 4-step `step200` output, and also check
+   `step000 -> step100 -> step200` for collapse, flicker, static frames,
+   severe artifacts, or prompt drift.
+2. Based on visual review, decide whether a 500-step run or baseline
+   DMD/Self-Forcing comparison is warranted.
+3. Decide whether the duplicate final `checkpoint-200` save is acceptable as
    existing trainer behavior or should be cleaned up before PR.
-3. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
+4. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
    draft PR only if explicitly requested.
