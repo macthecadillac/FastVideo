@@ -612,9 +612,9 @@ What this still will not prove:
      interval-1 resume's validation behavior. Observed so far: checkpoint-100
      loaded, validation offloaded optimizer state plus teacher/critic,
      generated validation videos, restored teacher/critic and optimizer state,
-     restored RNG snapshot, then completed step `101` with student-grad,
-     critic-grad, loss, and EMA rows. Continue monitoring toward steps
-     `188..195`.
+     restored RNG snapshot, then resumed training. Latest observed status:
+     steps `101..150` completed with student-grad, critic-grad, loss, and EMA
+     rows. Continue monitoring toward steps `188..195`.
 2. Decide the next training diagnostic budget. The current evidence supports
    running a longer pilot only as a 4-step-convergence check, not to debug
    checkpoint loading or EMA application, but the interval-1 hang must be
