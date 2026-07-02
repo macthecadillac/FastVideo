@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 after live step-200 high-step student diagnostic
+Last updated: 2026-07-02 before interval-1 student-update diagnostic
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -396,6 +396,33 @@ Dataset summary from earlier Modal runs:
   passed.
 - Live 50-step student output is clear/prompt-conditioned while 4-step base and
   4-step TDM outputs are blurred: passed.
+
+## Active Diagnostic Plan
+
+Next run: interval-1 student-update diagnostic for the same Wan TDM LoRA setup.
+
+- Rationale: the 200-step SDE pilot used `generator_update_interval=5`, so it
+  produced only about 40 student/generator updates. The critic was healthy and
+  validation/EMA wiring is now proven, but the 4-step student output did not
+  improve over the blurred base 4-step DMD baseline.
+- First diagnostic to run: `max_train_steps=200` with
+  `method.generator_update_interval=1`. This gives about 200 student updates,
+  matching the student-update count of a `1000` outer-step run with interval
+  `5`, but with fewer critic-only outer steps.
+- Keep all other meaningful settings aligned with the current default TDM
+  config: SDE rollout, LoRA rank/alpha, Wan 2.1 T2V 1.3B, 4-step validation
+  schedule `[1000,750,500,250]`, seed `1000`, `448x832`, `77` frames.
+- Expected validation targets: 4-step videos at steps `0`, `100`, and `200`,
+  metrics JSONL, and DCP checkpoints. Compare prompt 0 against the existing
+  teacher 50-step, base Wan DMD 4-step, and interval-5 200-step TDM artifacts.
+- Decision rule:
+  - If interval `1` stays stable and improves 4-step contrast/detail, consider
+    changing the recommended TDM diagnostic/default cadence or running a
+    longer interval-1 pilot.
+  - If interval `1` stays stable but remains blurred, prioritize objective /
+    sigma schedule / weighting debugging over simply increasing outer steps.
+  - If interval `1` is unstable, keep interval `5` and run the longer 1000-step
+    convergence pilot as originally planned.
 
 What this still will not prove:
 
