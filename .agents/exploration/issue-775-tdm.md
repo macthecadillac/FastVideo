@@ -498,6 +498,36 @@ Interval-1 run status:
     unless the hang unexpectedly resolves before it is stopped. The last
     committed durable artifacts remain `checkpoint-100`, tracker, and
     validation MP4s for steps `0` and `100`.
+  - The app was stopped manually with
+    `uvx modal app stop ap-XVo1dVzlskj0Bs1UUMNbvH --yes`; the local launcher
+    then exited with Modal `RemoteError` caused by "user stopped from CLI".
+  - Post-stop Modal volume listing confirmed only these durable artifacts:
+    `checkpoint-100`, `tracker`, and the eight validation videos for steps
+    `0` and `100`. There is still no `checkpoint-200` or step-200 validation.
+  - Persisted artifacts were downloaded to
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_pilot_sde_200_interval1_35888898_dataset/`.
+    This local directory contains `tracker/{config.json,metrics.jsonl,
+    artifacts.jsonl,files/run.yaml}` plus eight MP4s.
+  - Tracker summary:
+    - raw JSONL rows: `840`
+    - unique steps: `1..193`
+    - duplicate metric groups: steps `101..117`, all four row types; this
+      matches overlap between the original interrupted job and the resumed
+      job.
+    - de-duplicated rows: `772`
+    - de-duplicated loss/student-grad/critic-grad/EMA rows: `193` each
+    - `update_student` true on all de-duplicated steps `1..193`
+    - nonfinite scalar metrics: `0`
+    - de-duplicated `total_loss`: min `0.1882624775`, max `0.9230759740`,
+      mean `0.4580486829`, first `0.3315637112`, last `0.4681196511`
+    - de-duplicated `fake_score_loss`: min `0.0004032278`, max
+      `0.0016866034`, mean `0.0010733638`, first `0.0015967983`, last
+      `0.0014704503`
+    - de-duplicated `generator_loss`: min `0.1868882924`, max
+      `0.9219567180`, mean `0.4569753191`, first `0.3299669027`, last
+      `0.4666492045`
+  - Downloaded video sanity check with `ffprobe`: all eight MP4s report
+    `832x448`, `77` frames, duration `4.812500`.
 
 What this still will not prove:
 
@@ -508,18 +538,24 @@ What this still will not prove:
 
 ## Current Remaining Work
 
-1. Decide the next training diagnostic budget. The current evidence supports
+1. Investigate the interval-1 hang before running a longer interval-1 pilot.
+   The hang occurred after logging step-193 student grad and before the
+   step-193 critic/loss/EMA rows, so the most likely debugging surface is the
+   critic-side backward/optimizer/distributed synchronization path rather than
+   data loading or validation.
+2. Decide the next training diagnostic budget. The current evidence supports
    running a longer pilot only as a 4-step-convergence check, not to debug
-   checkpoint loading or EMA application.
-2. If running longer, keep the same prompt 0 comparison workflow:
+   checkpoint loading or EMA application, but the interval-1 hang must be
+   addressed or bounded first.
+3. If running longer, keep the same prompt 0 comparison workflow:
    teacher 50-step, base Wan DMD 4-step, TDM student 4-step at checkpoints, and
    optional live-student 50-step spot checks. The expected success signal is
    that TDM 4-step starts gaining contrast/detail and prompt-conditioned
    objects relative to the blurred base 4-step DMD baseline.
-3. Fix or defer `dcp_to_diffusers` export limitations:
+4. Fix or defer `dcp_to_diffusers` export limitations:
    materialize copied HF symlinks and add a LoRA merge/export path so normal
    inference can load a DCP-exported TDM student.
-4. Decide whether the duplicate final `checkpoint-200` save is acceptable as
+5. Decide whether the duplicate final `checkpoint-200` save is acceptable as
    existing trainer behavior or should be cleaned up before PR.
-5. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
+6. Before any PR, re-check issue/PR state, rerun Modal tests, and prepare a
    draft PR only if explicitly requested.
