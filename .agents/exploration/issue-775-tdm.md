@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 before interval-1 student-update diagnostic
+Last updated: 2026-07-02 during interval-1 student-update diagnostic
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -423,6 +423,33 @@ Next run: interval-1 student-update diagnostic for the same Wan TDM LoRA setup.
     sigma schedule / weighting debugging over simply increasing outer steps.
   - If interval `1` is unstable, keep interval `5` and run the longer 1000-step
     convergence pilot as originally planned.
+
+Interval-1 run status:
+
+- First launch app `ap-ZS7yR5ozq2vlVb8ruIOmox` failed before training because
+  the command missed the Modal dataset override and used the YAML placeholder
+  `data/Wan-Syn_77x448x832_600k`. Root error:
+  `FileNotFoundError: No parquet files found under dataset path`.
+- Corrected launch app: `ap-vX9fvoypEPLOOXFRYPygPo`
+- Commit: `ea7e8704502aaa0485aa9dba921416c66c1542b6` plus CLI-only config
+  overrides; later branch commits are handoff-only.
+- Output root:
+  `/root/data/tdm_pilot_sde_200_interval1_35888898_dataset`
+- Corrected command summary:
+  - `generator_update_interval=1`
+  - `max_train_steps=200`
+  - dataset:
+    `/root/data/.cache/datasets--wlsaidhi--crush-smol_processed_t2v/snapshots/67dd07f2163ad2b3397f8b3d8125b67ca452dc85/combined_parquet_dataset`
+  - checkpoints every `100` steps
+  - JSONL tracker only
+  - validation every `100` steps
+  - validation offloads training state and unloads pipeline after validation
+- Early status observed in logs: corrected run reached staged parquet dataset,
+  initialized JSONL tracker, instantiated validation and EMA, completed step-0
+  validation, entered training, and logged both `grad_norm/student` and
+  `grad_norm/critic` starting at step `1`. Through at least step `27`, every
+  step logged student and critic metrics, confirming interval `1` is active and
+  initially stable. Approximate steady-state step time: `40` seconds.
 
 What this still will not prove:
 
