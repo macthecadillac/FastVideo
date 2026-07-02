@@ -485,10 +485,13 @@ Interval-1 run status:
     has logged student and critic gradients plus `update_student`, confirming
     `generator_update_interval=1` remains active.
   - The resumed job later advanced normally through step `192`. At
-    `2026-07-02 08:15:07 UTC`, step `193` logged only
-    `grad_norm/student`; no `grad_norm/critic`, loss row, EMA row, progress-bar
-    advance, checkpoint, validation, or process-exit logs followed for several
-    minutes.
+    `2026-07-02 08:15:07 UTC`, the local stream appeared to stop at step `193`
+    after `grad_norm/student`; no later streamed `grad_norm/critic`, loss row,
+    EMA row, progress-bar advance, checkpoint, validation, or process-exit logs
+    followed for several minutes. Later downloaded JSONL showed this was a
+    stream/log artifact: the durable tracker contains complete step-`193`
+    rows, so the actual stall happened after step `193` completed and before
+    step `194` completed.
   - Independent `uvx modal app logs ap-XVo1dVzlskj0Bs1UUMNbvH` checks matched
     the local stream: stdout stopped at the step-193 student-gradient line and
     stderr showed only progress-bar output through step `192`. `uvx modal app
@@ -577,6 +580,29 @@ What this still will not prove:
      all ranks emit grad-clip begin/end lines. The stop produced the expected
      Modal `RemoteError`/SIGINT logs while the T5 encoder was loading; no
      training-step evidence came from that app.
+   - Active all-rank Modal diagnostic: app `ap-og6ZwCuU1gbTgog6T08ub2`,
+     commit `3550048bc446d837fc20e948471615720df22c85`, output root
+     `/root/data/tdm_debug_interval1_clip_allranks_195_3550048b`.
+     It resumes from
+     `/root/data/tdm_pilot_sde_200_interval1_35888898_dataset/checkpoint-100`,
+     disables validation/checkpoint saves, runs to step 195, and logs
+     grad-clip begin/end from all ranks for steps 188-195.
+   - Result: the no-validation/no-checkpoint control completed through step
+     `195` and committed Modal volume output. Persisted tracker:
+     `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_debug_interval1_clip_allranks_195_3550048b/metrics.jsonl`.
+     Summary: `380` JSONL rows; steps `101..195` (`95` unique steps);
+     `95` student-grad rows, `95` critic-grad rows, `95` loss rows, `95` EMA
+     rows; nonfinite scalar metrics `0`. All ranks reported `DTensor` grads
+     for both student and critic in the debug window. Critic grad clipping
+     returned on every rank at steps `188..195`; step `193` also logged
+     critic, loss, and EMA rows. Therefore the prior interval-1 stop is not a
+     deterministic grad-clip deadlock in the validation-free training loop.
+   - Important correction: the downloaded tracker for the earlier stopped
+     interval-1 resume contains complete step-`193` rows (`grad_norm/student`,
+     `grad_norm/critic`, loss metrics, and `ema/decay`). The streamed logs had
+     appeared to stop after `grad_norm/student`, but the durable JSONL shows
+     step `193` completed. The actual stalled interval was after step `193`
+     completed and before step `194` completed.
 2. Decide the next training diagnostic budget. The current evidence supports
    running a longer pilot only as a 4-step-convergence check, not to debug
    checkpoint loading or EMA application, but the interval-1 hang must be
