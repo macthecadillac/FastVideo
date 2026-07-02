@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 during interval-1 student-update diagnostic
+Last updated: 2026-07-02 after interrupted interval-1 run
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -457,6 +457,21 @@ Interval-1 run status:
     offloaded optimizer state plus teacher/critic for validation, completed
     4-step validation, restored validation state, and resumed training through
     at least step `102`.
+  - The local session was interrupted after logs had reached about step `111`.
+    After the interruption, `/tmp` worktrees were wiped and had to be
+    recreated. Modal volume listing showed only partial committed artifacts:
+    `checkpoint-100`, tracker, and validation MP4s for steps `0` and `100`.
+    No `checkpoint-200` or step-200 validation files were present, so the
+    interval-1 diagnostic is not complete yet.
+- Resume plan:
+  - Recreate `/tmp/fastvideo-worktrees/issue-775-tdm` at branch
+    `issue/775-tdm` and `/tmp/fastvideo-worktrees/interleavethinker-modal` at
+    branch `interleavethinker`.
+  - Relaunch the same interval-1 command with
+    `training.checkpoint.resume_from_checkpoint=/root/data/tdm_pilot_sde_200_interval1_35888898_dataset/checkpoint-100`,
+    same output root, and `max_train_steps=200`.
+  - After completion, download tracker plus validation MP4s and compare prompt
+    0 against teacher/base-DMD/interval-5 artifacts.
 
 What this still will not prove:
 
