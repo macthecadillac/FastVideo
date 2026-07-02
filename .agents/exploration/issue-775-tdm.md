@@ -444,12 +444,19 @@ Interval-1 run status:
   - JSONL tracker only
   - validation every `100` steps
   - validation offloads training state and unloads pipeline after validation
-- Early status observed in logs: corrected run reached staged parquet dataset,
-  initialized JSONL tracker, instantiated validation and EMA, completed step-0
-  validation, entered training, and logged both `grad_norm/student` and
-  `grad_norm/critic` starting at step `1`. Through at least step `27`, every
-  step logged student and critic metrics, confirming interval `1` is active and
-  initially stable. Approximate steady-state step time: `40` seconds.
+- Status observed in logs:
+  - Corrected run reached staged parquet dataset, initialized JSONL tracker,
+    instantiated validation and EMA, completed step-0 validation, entered
+    training, and logged both `grad_norm/student` and `grad_norm/critic`
+    starting at step `1`.
+  - Through step `100`, every step logged student and critic metrics,
+    confirming interval `1` is active and stable through the first half of the
+    run. Approximate steady-state step time: `40` seconds.
+  - Step `100` started checkpoint save to
+    `/root/data/tdm_pilot_sde_200_interval1_35888898_dataset/checkpoint-100`,
+    offloaded optimizer state plus teacher/critic for validation, completed
+    4-step validation, restored validation state, and resumed training through
+    at least step `102`.
 
 What this still will not prove:
 
