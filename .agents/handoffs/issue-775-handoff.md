@@ -128,6 +128,48 @@ handoff keeps only state needed to continue work.
     `uvx mypy --explicit-package-bases fastvideo/train/methods/distribution_matching/tdm.py`
     passed with `Success: no issues found in 1 source file`.
   - Follow-up `git diff --check`: passed.
+- Signed code commit and push:
+  - Commit: `9f9c52d7cc1617a266209d85712f5576d117a045`
+    `[fix]: align TDM generator score schedule`.
+  - `git log -1 --show-signature` verified a good signature from
+    `Mac Lee <macthecadillac@gmail.com>` using subkey
+    `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+  - Pre-push GitHub refresh: `gh` identity `macthecadillac`; issue #775
+    unchanged/open; narrow open PR searches for `775` and `TDM` returned
+    `[]`.
+  - Pushed to `origin/issue/775-tdm`. Push succeeded with non-fatal
+    `known_hosts` cross-device-link warnings from the local SSH hostfile
+    update path.
+- Next validation direction after this commit: inspect DGX Spark availability
+  and launch any longer schedule-aligned interval-1 convergence run only as a
+  detached Docker job with durable logs/output, never as a foreground SSH
+  process.
+- DGX Spark inspection after push:
+  - Connected with SSH using task-local known-hosts file
+    `/tmp/dgx_spark_known_hosts` after the shared SSH known-hosts file rejected
+    the host key.
+  - Hostname: `spark-1a51`.
+  - Docker is installed: `Docker version 29.2.1, build a5c7197`.
+  - GPU query reports `NVIDIA GB10`, driver `580.159.04`; memory field is
+    `N/A`, consistent with GB10 unified-memory reporting.
+  - `tmux 3.4` is installed.
+  - Disk at `/home/mac`: `3.7T` total, `2.9T` available.
+  - Current blocker: user `mac` cannot access Docker directly:
+    `permission denied while trying to connect to the docker API at
+    unix:///var/run/docker.sock`.
+  - `id` shows `mac` is in groups `mac` and `sudo`, but not `docker`.
+    `/var/run/docker.sock` is owned by `root:docker` with mode `srw-rw----`.
+  - `sudo -n docker --version` fails with `sudo: a password is required`.
+  - Therefore the longer DGX Spark run was **not launched**. To proceed while
+    honoring the project rule that DGX workloads run in Docker, the `mac`
+    user needs Docker-socket access, passwordless Docker sudo, or another
+    approved way to start the required image
+    `ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest`.
+  - When Docker access is fixed, launch the training as a detached named
+    container (or from a detached tmux session that starts a named detached
+    container) with logs under a durable directory such as
+    `/home/mac/fastvideo-runs/issue-775/`. Do not run long training as a
+    foreground SSH-attached process.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
