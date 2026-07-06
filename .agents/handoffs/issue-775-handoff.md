@@ -207,8 +207,8 @@ handoff keeps only state needed to continue work.
     `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/logs/training.log`.
     Tracker:
     `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/output/tracker/`.
-  - Startup validation completed. The first training step completed and
-    wrote finite JSONL rows: `grad_norm/student=0.0022551888`,
+  - Startup validation completed. The first two training steps completed and
+    wrote finite JSONL rows. Step 1 had `grad_norm/student=0.0022551888`,
     `grad_norm/critic=0.0015945135`, `fake_score_loss=0.0012508066`,
     `generator_loss=0.2636678517`, and `total_loss=0.2649186552`.
     The new schedule diagnostics appeared in real training at step 1:
@@ -216,9 +216,17 @@ handoff keeps only state needed to continue work.
     `tdm/generator/normalization_denom=0.033447265625`,
     `tdm/generator/raw_delta_abs_mean=0.0187694486`, and
     `tdm/generator/target_delta_abs_mean=0.5606355071`.
+    Step 2 also wrote finite rows with `grad_norm/student=0.0288033448`,
+    `grad_norm/critic=0.0017635319`, `fake_score_loss=0.0005794067`,
+    `generator_loss=0.6215059757`, and `total_loss=0.6220853925`.
+    Its generator diagnostics sampled another configured TDM step:
+    `tdm/generator/timestep=1000.0`, `tdm/generator/sigma=1.0`,
+    `tdm/generator/normalization_denom=0.9140625`,
+    `tdm/generator/raw_delta_abs_mean=0.8226878047`, and
+    `tdm/generator/target_delta_abs_mean=0.9000012875`.
   - Last observed DGX status before this handoff update:
     `docker inspect` reports `running true 0`; the progress bar had reached
-    `Steps: 1/500`. Leave the detached container running unless the user asks
+    `Steps: 2/500`. Leave the detached container running unless the user asks
     to stop or relaunch it.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
