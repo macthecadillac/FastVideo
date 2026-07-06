@@ -1,11 +1,123 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-06 after move to `fix-issue` handoff path
+Last updated: 2026-07-06 after full interval-1 resume-to-200 validation
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
 handoff keeps only state needed to continue work.
+
+## 2026-07-06 Resume Update
+
+- Resumed at `2026-07-06 04:04:09 UTC` from
+  `/tmp/fastvideo-worktrees/issue-775-tdm`.
+- Verified `gh` identity outside the sandbox: `macthecadillac`.
+- Stage resumed: **Stage 2 - Implement The User-Directed Fix**.
+- Refreshed issue state with `gh issue view 775 -R hao-ai-lab/FastVideo`:
+  issue remains open, assigned to `macthecadillac`, updated
+  `2026-06-30T13:58:39Z`, with no comments beyond `zhisbug`'s maintainer
+  interest comment and the stale-bot comment already recorded below.
+- Refreshed open PR state with `gh pr list` and narrowed related search:
+  no open PR explicitly references issue `775` or `TDM` in title, head branch,
+  body, or closing issue references. No PR draft status was changed.
+- Current next action remains the validation/diagnostic decision recorded
+  below: either run the full original interval-1 resume-to-200 with
+  checkpoint saves and validation enabled, or decide to stop/redirect the
+  quality investigation before Stage 3.
+- Modal volume preflight with
+  `uvx modal volume ls hf-model-weights tdm_pilot_sde_200_interval1_35888898_dataset`
+  confirmed only `checkpoint-100`, `tracker`, and step-0/step-100 validation
+  videos are present. No `checkpoint-200` or step-200 validation artifacts
+  existed before launching the next resume attempt.
+- First full resume launch attempt app `ap-gQAnwHSK5VFBaclkNhVUhI` failed
+  before training. Modal cloned `https://github.com/hao-ai-lab/FastVideo.git`
+  and could not check out `e0fd865365f6d92d1e9bbef0dc604f303030cc2e`
+  (`fatal: reference is not a tree`) because the issue branch commit is on
+  fork remote `git@github.com:macthecadillac/FastVideo.git`, branch
+  `issue/775-tdm`. Rerun should use
+  `https://github.com/macthecadillac/FastVideo.git` for the Modal clone.
+- Corrected full resume launch app `ap-1ejJtcQ4y3iUZ4JSBuT0Zz` started from
+  `https://github.com/macthecadillac/FastVideo.git` at commit
+  `e0fd865365f6d92d1e9bbef0dc604f303030cc2e`. Checkout succeeded. Command
+  resumes from
+  `/root/data/tdm_pilot_sde_200_interval1_35888898_dataset/checkpoint-100`,
+  runs to `max_train_steps=200`, sets
+  `method.generator_update_interval=1`, keeps checkpoint saves every `100`
+  steps, enables validation every `100` steps with
+  `offload_training_state=true` and `unload_pipeline_after_validation=true`,
+  uses JSONL tracking only, and commits the Modal volume.
+- Early stream progress: checkpoint loaded and resumed from step `100`;
+  resume-time validation completed, optimizer/teacher/critic state restored,
+  RNG snapshot restored, and resumed training completed through step `104`.
+  Steps `101..104` each logged student grad, critic grad, loss metrics with
+  `update_student`, and EMA rows.
+- Continued stream progress: completed through step `110` with the same full
+  JSONL row set for every resumed step. Progress-bar step time stabilized at
+  about `40.8..42.0s` per step.
+- Continued stream progress: completed through step `130`; every streamed
+  step still logged student grad, critic grad, loss metrics with
+  `update_student`, and EMA rows. No hang or nonfinite metric was visible in
+  the stream.
+- Mid-run stream progress: completed through step `150` with the same full
+  JSONL row set. Step times remain about `40..41s`; no visible stalled step,
+  missing row group, or process error.
+- Later stream progress: completed through step `170` with student grad,
+  critic grad, loss metrics, and EMA rows for every streamed step. No visible
+  stalled step, missing row group, process error, or nonfinite warning.
+- Later stream progress: completed through step `180` with all expected
+  tracker row groups. The run is now approaching the previous stopped region
+  around steps `193..194`.
+- Critical region cleared in the live stream: step `193` logged student grad,
+  critic grad, loss metrics, and EMA rows, and step `194` also completed all
+  four row groups. This rerun does not reproduce a deterministic full-command
+  hang between steps `193` and `194`.
+- Full interval-1 resume result: app `ap-1ejJtcQ4y3iUZ4JSBuT0Zz` completed
+  successfully, reached step `200`, saved `checkpoint-200`, ran step-200
+  validation, committed the Modal volume, and exited with code `0`. Non-fatal
+  warnings matched known behavior: duplicate final `checkpoint-200` overwrite
+  warnings and NCCL `destroy_process_group()` shutdown warnings.
+- Modal volume after completion contains `checkpoint-100`, `checkpoint-200`,
+  `tracker`, and validation videos for steps `0`, `100`, and `200`.
+- Downloaded lightweight artifacts to
+  `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_pilot_sde_200_interval1_full_resume/`:
+  tracker `metrics.jsonl`, `artifacts.jsonl`, `config.json`,
+  `tracker/files/run.yaml`, all four step-200 MP4s, frame-38 PNG for prompt 0,
+  and contact sheet
+  `prompt0_frame38_interval1_contact_sheet.png`.
+- De-duplicated tracker summary after keeping the latest row per
+  `(step, row_group)`:
+  - rows: `800`; steps: `1..200` (`200` unique).
+  - row groups: `200` student-grad, `200` critic-grad, `200` loss, `200` EMA.
+  - missing/nonunique row groups after de-duplication: `0`.
+  - nonfinite scalar metrics: `0`.
+  - `update_student` is `1.0` for all `200` loss rows.
+  - `tdm/fake_score/sigma_to_is_terminal` is `0.0` for all `200` loss rows.
+  - `tdm/fake_score/snr_weight` is `1.0` for all `200` loss rows.
+  - `total_loss`: min `0.1882624775`, max `0.9327092767`, mean
+    `0.4572506941`, first `0.3315637112`, last `0.4248001873`.
+  - `fake_score_loss`: min `0.0003644582`, max `0.0016866034`, mean
+    `0.0010596468`, first `0.0015967983`, last `0.0011549045`.
+  - `generator_loss`: min `0.1868882924`, max `0.9316013455`, mean
+    `0.4561910472`, first `0.3299669027`, last `0.4236452878`.
+  - `step_time_sec`: min `39.8365791600`, max `51.9692875260`, mean
+    `40.6320101186`, first `51.2910224430`, last `40.5539538170`.
+  - Steps `193`, `194`, and `200` each have exactly one student-grad,
+    critic-grad, loss, and EMA row after de-duplication.
+- `ffprobe` sanity check on each step-200 MP4: `832x448`, `77` frames,
+  `16` fps, duration `4.812500s`.
+- Visual comparison for prompt 0 frame 38:
+  teacher 50-step is clear and prompt-conditioned; base Wan 4-step DMD, old
+  interval-5 TDM step-200, and new interval-1 TDM step-200 all remain heavily
+  blurred/frosted with no clear prompt-conditioned object. The interval-1
+  full resume proves the run can complete and produce artifacts, but it does
+  not show visible 4-step quality improvement at step 200.
+- Current next decision: either spend a longer interval-1 convergence pilot to
+  see whether more student updates eventually improve 4-step quality, or stop
+  convergence spending for now and debug objective/sigma schedule/weighting
+  before additional long runs. Given the completed 200-step interval-1 output
+  is still visibly blurred, the recommended next direction is objective /
+  schedule / weighting investigation rather than immediately scaling the same
+  settings.
 
 ## Fix-Issue Resume State
 
