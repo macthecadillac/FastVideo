@@ -196,6 +196,14 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert bool(loss_map["generator_loss"].isfinite().item())
     assert bool(loss_map["fake_score_loss"].isfinite().item())
     assert metrics["update_student"] == 1.0
+    generator_timestep = float(torch.as_tensor(metrics["tdm/generator/timestep"]).item())
+    generator_sigma = float(torch.as_tensor(metrics["tdm/generator/sigma"]).item())
+    assert generator_timestep in {1000.0, 750.0, 500.0, 250.0}
+    assert generator_sigma in {1.0, 0.75, 0.5, 0.25}
+    assert "tdm/generator/raw_delta_abs_mean" in metrics
+    assert "tdm/generator/target_delta_abs_mean" in metrics
+    assert "tdm/generator/normalization_denom" in metrics
+    assert metrics["tdm/generator/normalize_delta"] == 1.0
     assert "tdm/fake_score/sigma_from" in metrics
     assert "tdm/fake_score/sigma_to" in metrics
     assert "tdm/fake_score/snr_weight" in metrics
@@ -210,12 +218,23 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert critic.backward_calls == 1
 
 
+def test_tdm_generator_loss_samples_tdm_step_list() -> None:
+    method, _, _ = _build_method()
+    valid_steps = {1000, 750, 500, 250}
+
+    for _ in range(16):
+        timestep = method._sample_training_timestep(torch.device("cpu"))
+
+        assert int(timestep.item()) in valid_steps
+
+
 def test_tdm_respects_generator_update_interval() -> None:
     method, student, critic = _build_method(generator_update_interval=2)
 
     loss_map, outputs, metrics = method.single_train_step({}, iteration=1)
 
     assert metrics["update_student"] == 0.0
+    assert "tdm/generator/timestep" not in metrics
     assert outputs["_fv_backward"]["update_student"] is False
 
     method.backward(loss_map, outputs)

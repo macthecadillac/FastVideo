@@ -1,13 +1,133 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-06 after full interval-1 resume-to-200 validation
+Last updated: 2026-07-06 objective/schedule investigation resumed
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
 handoff keeps only state needed to continue work.
 
 ## 2026-07-06 Resume Update
+
+### 2026-07-06 06:54 UTC Objective / Schedule Investigation
+
+- Resumed after interruption from recreated worktree
+  `/tmp/fastvideo-worktrees/issue-775-tdm` on branch `issue/775-tdm`.
+  Worktree was clean at pushed commit `c435ddf01`.
+- User selected the next Stage 2 direction: investigate TDM objective,
+  sigma schedule, and weighting before spending on a longer interval-1
+  convergence run.
+- User added an execution constraint for future long training runs: run them
+  on DGX Spark, and make sure a connection interruption cannot kill the job.
+  Any DGX Spark training must therefore use the required Docker image
+  `ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest`
+  and be launched detached/persistent, for example a named detached Docker
+  container and durable log/output paths, optionally supervised from tmux.
+  Do not run a long DGX job directly attached to the SSH session.
+- Refreshed GitHub state with `gh` as `macthecadillac`: issue #775 remains
+  open, assigned to `macthecadillac`, with the same two comments already
+  recorded below. Narrow open PR searches for `775` and `TDM` both returned
+  `[]`; no PR draft status was changed.
+- Code inspection findings for the current objective/schedule:
+  - `TDMMethod._student_trajectory` always routes generator gradients through
+    `trajectory.final_clean`, i.e. only the final prediction in the 4-step
+    rollout carries gradients.
+  - `TDMMethod._tdm_generator_loss` then samples a uniform training timestep
+    from the full scheduler range via `_sample_training_timestep`, independent
+    of the 4-step TDM rollout schedule. This means the student is rolled out
+    on `[1000, 750, 500, 250]` but the generator score target is usually
+    evaluated at off-schedule timesteps.
+  - `noise_interval_mode: separate` excludes terminal `sigma=1.0` fake-score
+    targets. For the current 4-step schedule, separate mode only produces
+    target sigmas among `0.5` and `0.75`; terminal targets are always absent.
+  - The completed full interval-1 tracker showed
+    `tdm/fake_score/snr_weight == 1.0` for every loss row. With target sigmas
+    `0.5` and `0.75`, the flow SNR is at most `1.0`, so the configured
+    `snr_clip: 5.0` is inert under the current schedule.
+  - The existing fake-score metrics expose sigma pair and weighting behavior,
+    but generator loss currently does not log its sampled timestep/sigma,
+    delta magnitude, or normalization denominator. That makes it hard to
+    distinguish bad convergence from an off-schedule or poorly scaled
+    generator objective.
+- Immediate implementation direction: keep changes narrow and directly used.
+  Add generator-objective diagnostics and align the TDM generator score
+  timestep with the active TDM denoising schedule instead of sampling uniformly
+  over the full training grid. This directly tests the strongest schedule
+  mismatch without adding an unused config surface.
+- Patch applied in this work segment:
+  - `fastvideo/train/methods/distribution_matching/tdm.py` now samples the
+    generator score timestep from `_get_denoising_step_list(...)` instead of
+    the full shifted training grid.
+  - `TDMMethod._tdm_generator_loss(...)` now returns focused generator
+    diagnostics on student-update steps:
+    `tdm/generator/timestep`, `tdm/generator/sigma`,
+    `tdm/generator/raw_delta_abs_mean`,
+    `tdm/generator/target_delta_abs_mean`,
+    `tdm/generator/normalization_denom`, and
+    `tdm/generator/normalize_delta`.
+  - `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`
+    documents that generator score timesteps use `tdm_denoising_steps`.
+  - `tests/local_tests/tdm/test_tdm_method_unit.py` now asserts generator
+    metrics are emitted on update steps, omitted on skipped generator-update
+    steps, and that `_sample_training_timestep(...)` only returns configured
+    TDM steps.
+- Local non-test checks run:
+  - `git diff --check`: passed.
+  - `python -m py_compile fastvideo/train/methods/distribution_matching/tdm.py tests/local_tests/tdm/test_tdm_method_unit.py`:
+    passed.
+  - `awk 'length($0) > 120 ...'` on changed code/config/test files:
+    no overlong lines reported.
+- Remote validation still needed: Modal L40S `pytest tests/local_tests/tdm/ -v -s`
+  through the `interleavethinker` launcher, then a short Wan TDM smoke or
+  diagnostic run with JSONL tracking to confirm generator metric rows and
+  schedule sampling in real training.
+- Remote unit validation completed:
+  - Modal app: `ap-jmEzm2lknkXnacVQgNYTmZ`.
+  - Launcher: `/tmp/fastvideo-worktrees/interleavethinker-modal/fastvideo/tests/modal/launch_l40s_job.py`.
+  - Base commit: `c435ddf01e4e408ce843434aeee3b01f2d6e81cc` from
+    `https://github.com/macthecadillac/FastVideo.git`.
+  - Local patch applied for `tdm.py`, `test_tdm_method_unit.py`, and
+    `tdm_t2v_lora.yaml`.
+  - Command: `pytest tests/local_tests/tdm/ -v -s`.
+  - Result: `11 passed, 14 warnings in 19.89s`.
+  - New coverage includes schedule-aligned generator timestep sampling and
+    generator diagnostics on student-update steps.
+- Remote real-training smoke completed:
+  - Modal app: `ap-M7bm8Y7TP7sQ3K7j4M1ZkC`.
+  - Base commit: `c435ddf01e4e408ce843434aeee3b01f2d6e81cc` plus the same
+    local patch as the unit validation.
+  - Command: 4x L40S `torchrun --standalone --nproc_per_node=4 -m
+    fastvideo.train.entrypoint.train` with the Wan TDM config,
+    staged `crush-smol_processed_t2v` dataset, `max_train_steps=2`,
+    `method.generator_update_interval=1`, JSONL-only tracking, checkpoint
+    saves disabled, validation disabled, and output root
+    `/root/data/tdm_diag_schedule_metrics_c435ddf_patch`.
+  - Result: completed successfully, committed the Modal volume, and produced
+    JSONL metrics. Non-fatal NCCL `destroy_process_group()` warnings matched
+    prior Modal training runs.
+  - Downloaded metrics to
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_diag_schedule_metrics_c435ddf_patch/metrics.jsonl`.
+  - Metrics summary: `8` JSONL rows; `2` generator/loss rows; nonfinite
+    scalar metrics `0`. Generator timestep/sigma pairs were
+    `(750.0, 0.75)` at step 1 and `(500.0, 0.5)` at step 2, confirming real
+    training now samples generator score timesteps from the configured TDM
+    grid. The same rows included the new generator diagnostics and retained
+    fake-score metrics. Fake-score target sigmas were `0.75` and `0.5`;
+    `tdm/fake_score/snr_weight` remained `1.0`, consistent with the earlier
+    finding that `snr_clip: 5.0` is inert for these target sigmas.
+- Changed-file lint/type checks:
+  - Initial sandboxed `uvx pre-commit run --files ...` failed because uv
+    could not write to `/home/toolbox/.cache/uv` inside the sandbox.
+  - Escalated rerun of
+    `uvx pre-commit run --files fastvideo/train/methods/distribution_matching/tdm.py tests/local_tests/tdm/test_tdm_method_unit.py examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml .agents/handoffs/issue-775-handoff.md`:
+    `yapf`, `ruff`, `codespell`, filename-space check, and suggestion hooks
+    passed; PyMarkdown/actionlint had no files to check; mypy hook failed
+    before checking files with the known worktree-name issue
+    `issue-775-tdm is not a valid Python package name`.
+  - Direct mypy fallback:
+    `uvx mypy --explicit-package-bases fastvideo/train/methods/distribution_matching/tdm.py`
+    passed with `Success: no issues found in 1 source file`.
+  - Follow-up `git diff --check`: passed.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.

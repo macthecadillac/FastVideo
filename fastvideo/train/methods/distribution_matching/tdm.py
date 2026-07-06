@@ -274,13 +274,14 @@ class TDMMethod(DMD2Method):
             dtype=training_batch.latents.dtype,
         )
         student_ctx = None
+        generator_metrics: dict[str, LogScalar] = {}
         if update_student:
             trajectory = self._student_trajectory(training_batch, with_grad=True)
             student_ctx = (
                 training_batch.timesteps,
                 training_batch.attn_metadata_vsa,
             )
-            generator_loss = self._tdm_generator_loss(trajectory.final_clean, training_batch)
+            generator_loss, generator_metrics = self._tdm_generator_loss(trajectory.final_clean, training_batch)
 
         (
             fake_score_loss,
@@ -303,6 +304,7 @@ class TDMMethod(DMD2Method):
             "critic_ctx": critic_ctx,
         }
         metrics: dict[str, LogScalar] = {"update_student": float(update_student)}
+        metrics.update(generator_metrics)
         metrics.update(fake_score_metrics)
         return loss_map, outputs, metrics
 
@@ -649,21 +651,22 @@ class TDMMethod(DMD2Method):
         }
 
     def _sample_training_timestep(self, device: torch.device) -> torch.Tensor:
-        timestep = torch.randint(
+        step_list = self._get_denoising_step_list(device)
+        index = torch.randint(
             0,
-            int(self.student.num_train_timesteps),
+            len(step_list),
             [1],
             device=device,
             dtype=torch.long,
             generator=self.cuda_generator,
         )
-        return self.student.shift_and_clamp_timestep(timestep)
+        return step_list[index].reshape(1)
 
     def _tdm_generator_loss(
         self,
         generator_pred_x0: torch.Tensor,
         batch: TrainingBatch,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, LogScalar]]:
         guidance_scale = get_optional_float(
             self.method_config,
             "real_score_guidance_scale",
@@ -708,17 +711,29 @@ class TDMMethod(DMD2Method):
             )
             real_cfg_x0 = real_uncond_x0 + (real_cond_x0 - real_uncond_x0) * float(guidance_scale)
             delta = real_cfg_x0 - faker_x0
+            raw_delta_abs_mean = delta.detach().float().abs().mean()
+            denom = torch.ones((), device=device, dtype=torch.float32)
             if self._normalize_generator_delta:
                 denom = torch.abs(generator_pred_x0.detach() - real_cfg_x0).mean()
                 delta = delta / denom.clamp_min(self._sigma_eps)
-            target = generator_pred_x0.detach() + torch.nan_to_num(delta)
+            target_delta = torch.nan_to_num(delta)
+            target = generator_pred_x0.detach() + target_delta
+            sigma = self._timestep_to_sigma(timestep)
 
         loss = self._elementwise_loss(generator_pred_x0, target)
         batch.dmd_latent_vis_dict.update({
             "dmd_timestep": timestep.float().detach(),
             "generator_pred_video": generator_pred_x0.detach(),
         })
-        return 0.5 * loss.mean()
+        metrics: dict[str, LogScalar] = {
+            "tdm/generator/timestep": timestep.detach().float().mean(),
+            "tdm/generator/sigma": sigma.detach().float().mean(),
+            "tdm/generator/raw_delta_abs_mean": raw_delta_abs_mean,
+            "tdm/generator/target_delta_abs_mean": target_delta.detach().float().abs().mean(),
+            "tdm/generator/normalization_denom": denom.detach().float(),
+            "tdm/generator/normalize_delta": float(self._normalize_generator_delta),
+        }
+        return 0.5 * loss.mean(), metrics
 
     def _elementwise_loss(
         self,

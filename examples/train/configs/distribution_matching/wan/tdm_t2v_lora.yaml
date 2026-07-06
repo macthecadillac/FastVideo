@@ -65,6 +65,8 @@ method:
   importance_weight_clip: 10.0
 
   # Generator target controls.
+  # Generator score timesteps are sampled from tdm_denoising_steps so the
+  # trajectory rollout and generator score target use the same few-step grid.
   normalize_generator_delta: true
   use_huber: false
   huber_c: 0.001
