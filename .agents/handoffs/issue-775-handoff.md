@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-06 objective/schedule investigation resumed
+Last updated: 2026-07-06 DGX Spark detached run launched
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -170,6 +170,56 @@ handoff keeps only state needed to continue work.
     container) with logs under a durable directory such as
     `/home/mac/fastvideo-runs/issue-775/`. Do not run long training as a
     foreground SSH-attached process.
+- DGX Spark retry after user added `mac` to the `docker` group:
+  - Rechecked GitHub state with `gh` as `macthecadillac`: issue #775 remains
+    open and assigned to `macthecadillac`; targeted open PR searches for
+    `775` and `TDM` returned `[]`.
+  - Reconnected to DGX Spark with the task-local known-hosts file
+    `/tmp/dgx_spark_known_hosts`. `id` now reports group membership
+    `mac`, `sudo`, and `docker`, and `docker ps` works without sudo.
+  - Verified the required project image is present on the host:
+    `ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest`,
+    digest
+    `sha256:f57024b64eb582f4b5c2b78ebf8f53e747603bb4ab79eda1c18c583eefe3b280`.
+  - Verified the image with `--gpus all`; inside the container
+    `/opt/venv/bin/python` reports Python `3.12.13`, Torch
+    `2.12.0+cu130`, and `torch.cuda.is_available() == True`.
+  - A first detached container,
+    `issue775_tdm_schedule_500_96af270`, was launched under
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270` but stalled
+    during a full git clone. It was stopped with `docker stop`; its run
+    directory and stopped container were left intact for audit.
+  - Current active run:
+    container `issue775_tdm_schedule_500_96af270_v2`, id
+    `d328cc9ceb7be4da83da6096f38104c61d33d9baaac847e9a6eed8875a626db1`.
+    It is launched with `docker run -d`, so SSH disconnection will not kill
+    the job. Host-mounted durable state lives under
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2`.
+  - The current container uses commit
+    `96af270abb97b9c5908f8d867ee3601205b758e4`, branch `issue/775-tdm`, and
+    the required Docker image. It shallow-clones
+    `https://github.com/macthecadillac/FastVideo.git`, installs editable
+    with `python -m pip install --no-deps -e .`, downloads
+    `wlsaidhi/crush-smol_processed_t2v`, and runs a 1-GPU Wan TDM interval-1
+    command to `max_train_steps=500` with JSONL tracking, checkpoints every
+    `100` steps, and validation every `100` steps.
+  - Logs:
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/logs/training.log`.
+    Tracker:
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/output/tracker/`.
+  - Startup validation completed. The first training step completed and
+    wrote finite JSONL rows: `grad_norm/student=0.0022551888`,
+    `grad_norm/critic=0.0015945135`, `fake_score_loss=0.0012508066`,
+    `generator_loss=0.2636678517`, and `total_loss=0.2649186552`.
+    The new schedule diagnostics appeared in real training at step 1:
+    `tdm/generator/timestep=500.0`, `tdm/generator/sigma=0.5`,
+    `tdm/generator/normalization_denom=0.033447265625`,
+    `tdm/generator/raw_delta_abs_mean=0.0187694486`, and
+    `tdm/generator/target_delta_abs_mean=0.5606355071`.
+  - Last observed DGX status before this handoff update:
+    `docker inspect` reports `running true 0`; the progress bar had reached
+    `Steps: 1/500`. Leave the detached container running unless the user asks
+    to stop or relaunch it.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
