@@ -1,11 +1,41 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-02 after interval-1 validation-enabled repro completed
+Last updated: 2026-07-06 after move to `fix-issue` handoff path
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
 handoff keeps only state needed to continue work.
+
+## Fix-Issue Resume State
+
+- Handoff path:
+  `.agents/handoffs/issue-775-handoff.md`
+- Current `fix-issue` stage:
+  **Stage 2 - Implement The User-Directed Fix**, validation/diagnostic
+  substage.
+- Implementation has begun:
+  yes. The branch contains TDM implementation, tests/docs, JSONL tracker
+  support, and temporary gated grad-clip debug instrumentation.
+- Stage 1 status:
+  complete. The user approved implementation earlier in the thread.
+- Stage 2 status:
+  in progress. Modal smoke/unit checks and short pilots have run. The current
+  blocker is not basic code execution; it is proving useful 4-step quality or
+  deciding what further quality/convergence budget to spend.
+- Stage 3 status:
+  not started. Do not run review/adjudication or draft a PR message until the
+  user selects the next implementation/validation direction and the branch is
+  committed/pushed in that state.
+- Stage 4 status:
+  not started. No PR exists for this branch; do not remove this handoff until
+  immediately before an explicitly requested draft PR creation.
+- Next resume action:
+  re-check issue/PR state with `gh`, then continue Stage 2. The best next
+  validation is a full original interval-1 resume-to-200 run from
+  `checkpoint-100` with checkpoint saves and validation enabled, so it
+  produces step-200 videos. If that completes, decide whether to spend on a
+  longer interval-1 convergence pilot.
 
 ## Worktree
 
@@ -14,22 +44,31 @@ handoff keeps only state needed to continue work.
 - Worktree: `/tmp/fastvideo-worktrees/issue-775-tdm`
 - Modal launcher worktree: `/tmp/fastvideo-worktrees/interleavethinker-modal`
   on branch `interleavethinker`
-- Handoff: `.agents/exploration/issue-775-tdm.md`
+- Handoff: `.agents/handoffs/issue-775-handoff.md`
 - Latest pushed issue-branch commit before this handoff update:
-  `946ddcad` `[debug]: update validation repro progress`
+  `9e2dc9aa` `[debug]: record interval validation repro result`
 
 ## GitHub State
 
-Last checked: 2026-07-02 with `gh` authenticated as `macthecadillac`.
+Last checked: 2026-07-06 with `gh api user --jq .login`; result:
+`macthecadillac`.
 
 - Issue: https://github.com/hao-ai-lab/FastVideo/issues/775
 - Title: `[Feature] TDM`
 - State: open
+- Created: 2025-09-01T08:20:12Z
+- Updated: 2026-06-30T13:58:39Z
+- Author: `fenght96`
 - Assignee: `macthecadillac`
 - Labels: `good first issue`, `contribution-needed`, `stale`, `keep-open`
-- Comments: only the 2026-02-04 maintainer interest comment and the
-  2026-05-31 stale-bot comment.
-- Open PR list: no active PR directly targeting TDM or issue 775.
+- Body asks whether FastVideo has a plan for TDM and links the paper.
+- Comments reviewed:
+  - 2026-02-04 maintainer interest comment from `zhisbug`.
+  - 2026-05-31 stale-bot comment.
+- Open PR state:
+  full open PR list was refreshed on 2026-07-06; targeted open PR searches for
+  `775` and `TDM` returned `[]`. No active PR directly targets TDM or issue
+  775, and no PR draft status was changed.
 
 ## Scope Decision
 
@@ -115,6 +154,7 @@ Implemented behavior:
 - `3550048b` `[debug]: log grad clip diagnostics from all ranks`
 - `9fdd20cb` `[debug]: record interval-1 control diagnostic`
 - `946ddcad` `[debug]: update validation repro progress`
+- `9e2dc9aa` `[debug]: record interval validation repro result`
 
 ## Validation Summary
 
@@ -362,6 +402,22 @@ Prompt 0 targeted blur diagnostics:
   - Separate cleanup is needed for `dcp_to_diffusers`: copied HF snapshot
     symlinks should be materialized, and exported LoRA-wrapped student weights
     need a merge/export path before normal inference can load them.
+
+Latest quality assessment from user-visible artifacts:
+
+- The inspectable 4-step videos available locally still look more or less the
+  same as earlier outputs.
+- Honest conclusion: the short 200-step interval-5 pilot did not produce a
+  visible 4-step quality improvement. This does not prove TDM cannot work on
+  Wan, but it means the current training budget/settings have not yet moved
+  visible 4-step quality.
+- Important caveat: the later interval-1 jobs from checkpoint-100 were
+  debugging runs. They completed controlled runs to step 195, but checkpoint
+  saving was disabled and they did not produce new inspectable step-195 or
+  step-200 videos.
+- The next meaningful quality artifact requires an interval-1 run that saves
+  and validates at step 200, or a longer convergence pilot after that path is
+  shown stable.
 
 ## Modal Data And Weights
 
