@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-07 DGX Spark run checked
+Last updated: 2026-07-07 DGX Spark non-root run completed
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -322,6 +322,34 @@ handoff keeps only state needed to continue work.
     `status=running running=true exit=0 oom=false`; the progress bar had
     reached the resumed step `101` region. Leave this detached v4 container
     running unless the user asks to stop it.
+  - Completion check on 2026-07-07: the same container now reports
+    `status=exited running=false exit=0 oom=false`, started
+    `2026-07-07T02:33:46.152754329Z`, finished
+    `2026-07-07T14:17:37.144901209Z`.
+  - Final log tail covered steps `482..500`, saved
+    `/workspace/run/output/checkpoint-500`, emitted the known duplicate final
+    `checkpoint-500` overwrite warning from final teardown, and ended with
+    `Training completed`.
+  - Completed-run tracker summary from
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/output/tracker/metrics.jsonl`:
+    `2000` JSONL rows, steps `1..500`, `500` loss rows, and `0` nonfinite
+    scalar metrics. Mean `step_time_sec` was `105.0814856065`; last-10-step
+    mean was `105.1063260978`. Last loss row at step `500`:
+    `total_loss=0.6324374079704285`,
+    `generator_loss=0.6307809352874756`,
+    `fake_score_loss=0.0016564970137551427`,
+    `tdm/generator/timestep=1000.0`, and `tdm/generator/sigma=1.0`.
+  - Durable checkpoints now present in the host-mounted output:
+    `checkpoint-100`, `checkpoint-200`, `checkpoint-300`, `checkpoint-400`,
+    and `checkpoint-500`, each with `metadata.json`.
+  - No new validation videos beyond the earlier step-0 artifacts are expected
+    from this non-root resume because `callbacks.validation.every_steps=0`
+    was intentionally set to avoid repeating the step-100 validation SIGTERM
+    failure path.
+  - Refreshed GitHub state before recording this completion: `gh` identity is
+    `macthecadillac`; issue #775 remains open and assigned to
+    `macthecadillac`; targeted open PR searches for `775` and `TDM` both
+    returned `[]`; no PR draft status was changed.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
@@ -457,11 +485,13 @@ handoff keeps only state needed to continue work.
   not started. No PR exists for this branch; do not remove this handoff until
   immediately before an explicitly requested draft PR creation.
 - Next resume action:
-  re-check issue/PR state with `gh`, then continue Stage 2. The best next
-  validation is a full original interval-1 resume-to-200 run from
-  `checkpoint-100` with checkpoint saves and validation enabled, so it
-  produces step-200 videos. If that completes, decide whether to spend on a
-  longer interval-1 convergence pilot.
+  re-check issue/PR state with `gh`, then continue Stage 2. The hardened
+  non-root DGX interval-1 resume reached step `500` successfully and produced
+  checkpoints through `checkpoint-500`. Because validation was disabled during
+  the resume, the next meaningful decision is whether to run separate
+  validation/video generation from `checkpoint-500`, inspect convergence
+  metrics more deeply, or proceed toward Stage 3 review/adjudication with the
+  current evidence.
 
 ## Worktree
 
