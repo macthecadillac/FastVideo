@@ -17,7 +17,7 @@
 - Handoff path: `.agents/handoffs/issue-1452-handoff.md`
 - Current stage: Stage 1 deep dive and plan
 - Implementation begun: no
-- Last updated: 2026-07-07T09:55:02Z
+- Last updated: 2026-07-07T10:02:10Z
 
 ## Authentication And Branch Discovery
 
@@ -27,6 +27,10 @@
 - No existing root checkout handoff was found at `.agents/handoffs/issue-1452-handoff.md`.
 - Created a new dedicated worktree at `/tmp/fastvideo-worktrees/issue-1452-dreamverse-i2v`.
 - `origin/main` was 8 commits behind `upstream/main`; the issue branch was based on `upstream/main` for current upstream behavior.
+- Stage 1 handoff commit `23ce681a3` was signed with GPG key `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D` and pushed to `macthecadillac/FastVideo:issue/1452-dreamverse-i2v`.
+- SSH push to `origin` hung twice without output and was interrupted. `gh auth status` confirmed `macthecadillac`; `gh auth setup-git` failed because `/home/toolbox/.gitconfig` was busy. A one-command HTTPS push using `credential.helper=!gh auth git-credential` succeeded.
+- Local branch tracking currently records the one-off HTTPS URL as `branch.issue/1452-dreamverse-i2v.remote`; future pushes can use:
+  `env GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push https://github.com/macthecadillac/FastVideo.git issue/1452-dreamverse-i2v:issue/1452-dreamverse-i2v`
 
 ## Issue Summary
 
