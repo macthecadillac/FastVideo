@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-06 DGX Spark detached run launched
+Last updated: 2026-07-07 DGX Spark run checked
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -228,6 +228,39 @@ handoff keeps only state needed to continue work.
     `docker inspect` reports `running true 0`; the progress bar had reached
     `Steps: 2/500`. Leave the detached container running unless the user asks
     to stop or relaunch it.
+- DGX Spark status check on 2026-07-07:
+  - Rechecked GitHub state before recording/pushing this update: `gh` identity
+    is `macthecadillac`; issue #775 remains open and assigned to
+    `macthecadillac`; targeted open PR searches for `775` and `TDM` returned
+    `[]`.
+  - Container `issue775_tdm_schedule_500_96af270_v2` is no longer running.
+    `docker inspect` reports
+    `status=exited running=false exit=1 oom=false error=`, started
+    `2026-07-06T07:45:26Z`, finished `2026-07-06T10:57:15Z`.
+  - Docker events in the termination window show only the container `die`
+    event with `exitCode=1`; no Docker OOM event or explicit kill event was
+    reported by Docker.
+  - The run reached step `100/500`, saved
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/output/checkpoint-100`,
+    started step-100 validation, offloaded optimizer, teacher, and critic
+    state, then received `SIGTERM` while loading the validation text encoder.
+    Log root-cause line:
+    `Signal 15 (SIGTERM) received by PID 352`.
+  - Tracker summary:
+    `400` JSONL rows, steps `1..100`, `100` loss rows, `0` nonfinite scalar
+    metrics. Mean `step_time_sec` was `105.139775953`; last-10-step mean was
+    `104.977194918`. Last loss row at step `100`:
+    `total_loss=0.3323473930`, `generator_loss=0.3318239748`,
+    `fake_score_loss=0.0005234162`.
+  - Durable artifacts currently present in the run output include
+    `checkpoint-100`, `tracker/metrics.jsonl`, `tracker/artifacts.jsonl`,
+    `tracker/config.json`, and step-0 validation videos. There are no
+    step-100 validation videos because the process was terminated during
+    validation setup.
+  - Suggested next action: resume from `checkpoint-100` in a new detached
+    Docker container, but avoid repeating the same validation failure mode.
+    The narrowest retry is to resume to step 200 with validation disabled or
+    moved later, then separately run validation from a checkpoint if needed.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
