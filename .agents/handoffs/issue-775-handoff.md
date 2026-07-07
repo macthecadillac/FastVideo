@@ -261,6 +261,67 @@ handoff keeps only state needed to continue work.
     Docker container, but avoid repeating the same validation failure mode.
     The narrowest retry is to resume to step 200 with validation disabled or
     moved later, then separately run validation from a checkpoint if needed.
+- DGX Spark hardened non-root resume on 2026-07-07:
+  - User requested the resume be hardened so the host process appears as
+    `mac` instead of `root` in process listings.
+  - Built a DGX-local derivative image tagged
+    `fastvideo-dev-nonroot:issue775` from the required base image
+    `ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest`.
+    Image id after rebuild: `e97970511b99`. The derivative only:
+    (1) copies the uv-managed Python runtime out from under `/root` to
+    `/opt/uv-python/cpython`, retargets `/opt/venv/bin/python*`, and
+    (2) adds `mac` as UID/GID `1006` in `/etc/passwd` and `/etc/group`.
+    This is still a Docker workload and does not use host `sudo`.
+  - Verified the image under `--user 1006:1006 --gpus all`: `id` resolves
+    `uid=1006(mac) gid=1006(mac)`, `getpass.getuser()` returns `mac`,
+    `/opt/venv/bin/python` runs Python `3.12.13`, Torch is
+    `2.12.0+cu130`, and CUDA is available.
+  - Repaired ownership of the existing host-mounted run directory with a
+    short Docker-launched `chown -R 1006:1006 /workspace/run`; no host `sudo`
+    was used. Verified key paths now report `mac:mac`, including
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/output`,
+    `output/checkpoint-100`, and `cache/hf`.
+  - Installed the resume script at
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/run_resume_nonroot.sh`.
+    It sets writable `HOME`, HF, XDG, Torch, matplotlib, and temp caches under
+    `/workspace/run`; runs from source via
+    `PYTHONPATH=/workspace/run/FastVideo`; avoids `pip install -e .`; resumes
+    from `/workspace/run/output/checkpoint-100`; keeps checkpoints every
+    `100` steps; resumes to `max_train_steps=500`; and disables validation
+    with `callbacks.validation.every_steps=0` to avoid repeating the
+    step-100 validation SIGTERM path.
+  - First non-root launch,
+    `issue775_tdm_schedule_500_96af270_v3_nonroot`, exited before training
+    because the first derivative image had UID `1006` but no `/etc/passwd`
+    entry, causing PyTorch/TorchInductor username lookup to fail:
+    `KeyError: 'getpwuid(): uid not found: 1006'`. The image was rebuilt with
+    the `mac` user entry before retrying.
+  - Active resumed container:
+    `issue775_tdm_schedule_500_96af270_v4_nonroot`, id
+    `df15cb858a67773b7eaadafdcac7544f0dc4e47ba77235fcb8954748be05f824`,
+    launched detached with `--user 1006:1006`, `--gpus all`, the existing run
+    directory bind-mounted to `/workspace/run`, and image
+    `fastvideo-dev-nonroot:issue775`.
+  - Host process ownership was verified with `docker top`: the wrapper
+    `bash`, `tee`, `torchrun`/`pt_elastic`, worker `python3`, and Python
+    resource tracker all appear as `mac`, UID `1006`, GID `1006`.
+  - Resume log:
+    `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/logs/training_resume_nonroot.log`.
+    The log confirms `Checkpoint loaded; resuming from step=100`, RNG restored
+    from `checkpoint-100`, and validation is instantiated with
+    `every_steps: 0`.
+  - Step `101` completed with finite JSONL rows:
+    `grad_norm/student=0.0056205532`,
+    `grad_norm/critic=0.0017859151`,
+    `fake_score_loss=0.0010663703`,
+    `generator_loss=0.3963286579`,
+    `total_loss=0.3973950148`,
+    `tdm/generator/timestep=500.0`, and `tdm/generator/sigma=0.5`.
+  - Last observed status before this handoff update:
+    `docker inspect` reports
+    `status=running running=true exit=0 oom=false`; the progress bar had
+    reached the resumed step `101` region. Leave this detached v4 container
+    running unless the user asks to stop it.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
