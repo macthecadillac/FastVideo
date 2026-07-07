@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-07 DGX Spark non-root run completed
+Last updated: 2026-07-07 DGX Spark checkpoint-500 validation completed
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -350,6 +350,56 @@ handoff keeps only state needed to continue work.
     `macthecadillac`; issue #775 remains open and assigned to
     `macthecadillac`; targeted open PR searches for `775` and `TDM` both
     returned `[]`; no PR draft status was changed.
+  - Checkpoint-500 video validation completed on DGX Spark after the user
+    asked for a validation run:
+    - Student validation used the FastVideo training validation callback from
+      `/workspace/run/output/checkpoint-500`, generated four TDM 4-step
+      videos with `sampling_steps=[4]`,
+      `sampling_timesteps=[1000,750,500,250]`, and
+      `guidance_scale=6.0`, then exited nonzero only because a following
+      inline teacher-generation script tried strict JSON parsing on the
+      repo's trailing-comma `validation_4.json`.
+    - Student validation container:
+      `issue775_tdm_step500_validation_20260707_nonroot`, id
+      `9a4034db1db396d84cac369ae24cf684f0dbae8c56708cccb932a50e035ca23b`,
+      `status=exited running=false exit=1 oom=false`, started
+      `2026-07-07T14:53:38.721304274Z`, finished
+      `2026-07-07T15:01:47.590903055Z`.
+    - Student outputs are saved on DGX at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/validation_step500/student_tdm_4step/validation_step_500_inference_steps_4_video_{0..3}.mp4`.
+      File sizes are approximately `289K`, `1.2M`, `157K`, and `1.3M`.
+    - Teacher/base Wan validation used a real script copied to DGX at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/validation_step500/run_teacher_validation.py`
+      because `VideoGenerator` multiprocessing spawn cannot run safely from
+      stdin. The script loads the same four prompts through
+      `datasets.load_dataset("json", field="data")`, then generates from
+      `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` with `height=448`, `width=832`,
+      `num_frames=77`, `fps=16`, `num_inference_steps=50`,
+      `guidance_scale=6.0`, and seed `1000`.
+    - Teacher validation container:
+      `issue775_tdm_step500_teacher_validation_v2_20260707_nonroot`, id
+      `a5028f5c68ee1c4b4598f6c637c374d08054f7f7bd855770f1212431f879b6df`,
+      `status=exited running=false exit=0 oom=false`, started
+      `2026-07-07T15:05:11.982770983Z`, finished
+      `2026-07-07T15:46:14.116088764Z`.
+    - Teacher outputs are saved on DGX at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/validation_step500/teacher_wan_50step/teacher_wan_50step_prompt{0..3}.mp4`.
+      Prompt text/index mapping is saved at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/validation_step500/teacher_wan_50step/prompts.json`.
+      File sizes are approximately `317K`, `832K`, `242K`, and `1.1M`;
+      `prompts.json` is approximately `3.0K`.
+    - Logs are saved at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/logs/validation_step500.log`
+      for the student callback run and
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_96af270_v2/logs/validation_step500_teacher_v2.log`
+      for the successful teacher run.
+    - `ffprobe` sanity check on all eight MP4s passed. Every student and
+      teacher video reports `832x448`, `77` frames, `16` fps, and duration
+      `4.812500s`.
+    - Final comparison set includes both student checkpoint-500 4-step videos
+      and teacher/base Wan 50-step videos. Technically, the built-in training
+      validation callback produced the student videos only; the teacher videos
+      were generated separately for comparison using the same prompt set.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
