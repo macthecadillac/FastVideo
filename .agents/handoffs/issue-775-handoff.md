@@ -575,6 +575,72 @@ handoff keeps only state needed to continue work.
         assigned to `macthecadillac`, and still has only the maintainer
         interest and stale-bot comments; targeted open PR search for
         `775 OR TDM` returned `[]`.
+      - Committed and pushed signed commit
+        `858845bba053130a626bc206498c6b7e5eedccea`
+        `[docs]: clarify TDM terminal noise mode`. `git log -1
+        --show-signature` verified a good signature from
+        `Mac Lee <macthecadillac@gmail.com>` using subkey
+        `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+    - Because the docs adjudicator changed the branch, Stage 3 continued with
+      another fresh `review-code` pass.
+    - Spawned fresh read-only `review-code` sub-agent `Dalton`
+      (`019f4002-994b-7c81-8f3d-b4884062783f`) to review the updated branch
+      after commit `858845bba053130a626bc206498c6b7e5eedccea`.
+    - Reviewer found one actionable issue: `tdm_denoising_steps` accepts any
+      non-empty list, but `_student_trajectory()` starts from pure random
+      noise and therefore assumes the first configured timestep maps to the
+      scheduler terminal / max sigma. If a user omits `1000`, reorders the
+      list, or supplies duplicate/non-descending steps, training silently runs
+      an off-distribution trajectory and target selection treats the max
+      configured sigma as terminal.
+    - Spawned fresh independent adjudicator/fixer sub-agent `Kuhn`
+      (`019f400a-136c-7291-8544-26402e806916`) with only the issue/repo,
+      committed branch/commit, and reviewer finding.
+    - Adjudicator accepted the schedule-validation finding and rejected none.
+    - Adjudicator implemented and pushed signed commit
+      `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`
+      `[fix]: validate TDM denoising schedule`.
+      `git log -1 --show-signature` verified a good signature from
+      `Mac Lee <macthecadillac@gmail.com>` using subkey
+      `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+    - Adjudicator changes:
+      - `fastvideo/train/methods/distribution_matching/tdm.py`: validates at
+        least two steps, terminal first sigma, and strictly decreasing mapped
+        sigmas.
+      - `tests/local_tests/tdm/test_tdm_method_unit.py`: added rejected
+        bad-schedule cases.
+      - `docs/training/train_infra.md` and
+        `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`:
+        documented the schedule contract.
+    - Adjudicator validation:
+      - Modal L40S app `ap-ijqla4arb5Rfpb5HZP4xMt`:
+        `pytest tests/local_tests/tdm/ -q` passed,
+        `17 passed in 21.96s`.
+      - Modal L40S app `ap-BsuDShZm6exFvLDGQ1QlAz`:
+        `pre-commit run --files ...changed files...` passed.
+    - Because the adjudicator changed code/docs, Stage 3 must continue with a
+      fresh `review-code` pass against the updated committed branch.
+    - Spawned fresh read-only `review-code` sub-agent `Dirac`
+      (`019f4013-4694-72d0-a4df-64057df2d5d2`) to review the updated branch
+      after commit `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`.
+    - Reviewer reported **no actionable findings**. It confirmed the earlier
+      terminal-mode, docs, stale README/debug scaffolding, and schedule
+      validation findings appear resolved. Residual risk is validation depth:
+      latest exact-SHA Modal TDM unit coverage and quality/convergence after
+      the final schedule-validation changes.
+    - Full pre-commit gate completed on Modal L40S app
+      `ap-PbwmXNpbbB4s9MpK9PgyvW` at pushed commit
+      `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`:
+      `pre-commit run --all-files` passed all hooks (`yapf`, `ruff`,
+      `codespell`, `PyMarkdown`, `actionlint`, `mypy`, filename-space, and
+      suggestion).
+    - Stage 3 stopped after the no-actionable-findings review pass. No PR has
+      been opened. The handoff remains active until explicit Stage 4 direction.
+    - Remaining risk: post-final long-convergence visual quality is still
+      unproven. The earlier checkpoint-500 validation outputs, generated
+      before the final generator-target/terminal-mode/schedule-validation
+      fixes, were visually degraded according to user review. The next quality
+      spend should be a short post-final canary before any longer DGX run.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
@@ -691,32 +757,29 @@ handoff keeps only state needed to continue work.
 - Handoff path:
   `.agents/handoffs/issue-775-handoff.md`
 - Current `fix-issue` stage:
-  **Stage 2 - Implement The User-Directed Fix**, validation/diagnostic
-  substage.
+  **Stage 3 - Review, Adjudicate, And Iterate**, completed and awaiting user
+  decision on whether to proceed to Stage 4 draft PR creation.
 - Implementation has begun:
   yes. The branch contains TDM implementation, tests/docs, JSONL tracker
-  support, and temporary gated grad-clip debug instrumentation.
+  support, and cleanup from the review/adjudication loop.
 - Stage 1 status:
   complete. The user approved implementation earlier in the thread.
 - Stage 2 status:
-  in progress. Modal smoke/unit checks and short pilots have run. The current
-  blocker is not basic code execution; it is proving useful 4-step quality or
-  deciding what further quality/convergence budget to spend.
+  complete for the current user-directed implementation. The latest code
+  commit is `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`.
 - Stage 3 status:
-  not started. Do not run review/adjudication or draft a PR message until the
-  user selects the next implementation/validation direction and the branch is
-  committed/pushed in that state.
+  complete. Review/adjudication loop ended with no actionable findings after
+  review sub-agent `Dirac`. Full Modal pre-commit passed at
+  `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`.
 - Stage 4 status:
   not started. No PR exists for this branch; do not remove this handoff until
   immediately before an explicitly requested draft PR creation.
 - Next resume action:
-  re-check issue/PR state with `gh`, then continue Stage 2. The hardened
-  non-root DGX interval-1 resume reached step `500` successfully and produced
-  checkpoints through `checkpoint-500`. Because validation was disabled during
-  the resume, the next meaningful decision is whether to run separate
-  validation/video generation from `checkpoint-500`, inspect convergence
-  metrics more deeply, or proceed toward Stage 3 review/adjudication with the
-  current evidence.
+  if the user asks to open the draft PR, run the Stage 4 pre-PR gate, transfer
+  final handoff context into the PR body, remove this handoff with `git rm`,
+  commit/push that removal, and create only a draft PR. If the user instead
+  asks for more quality validation, run a short post-final canary before any
+  longer DGX convergence run.
 
 ## Worktree
 
@@ -727,7 +790,87 @@ handoff keeps only state needed to continue work.
   on branch `interleavethinker`
 - Handoff: `.agents/handoffs/issue-775-handoff.md`
 - Latest pushed issue-branch commit before this handoff update:
-  `9e2dc9aa` `[debug]: record interval validation repro result`
+  `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`
+  `[fix]: validate TDM denoising schedule`
+
+## Draft PR Message
+
+Title: `[feat]: add Wan TDM training method`
+
+```markdown
+Fixes #775
+
+## Summary
+
+- Add a Wan-native Trajectory Distribution Matching training method for the
+  modular trainer, with student/teacher/critic roles, Wan flow noising, TDM
+  trajectory sampling, fake-score training, and generator score diagnostics.
+- Add a Wan 2.1 T2V 1.3B LoRA TDM example config plus training docs and focused
+  local TDM tests.
+- Add JSONL tracker support for durable scalar/artifact diagnostics.
+- Align generator score targets with fake-score target support, keep terminal
+  mode trainable by avoiding exact zero-SNR terminal sigma, and validate TDM
+  denoising schedules before training.
+
+## Validation
+
+- Modal L40S `pytest tests/local_tests/tdm/ -v -s`
+  - `12 passed in 20.86s`
+  - App: `ap-dkepDHPikkLfo8jyen37kB`
+- Modal H100 two-step Wan TDM real-training smoke
+  - App: `ap-v4R2pPiPPxl4zIC6FCoMnP`
+  - JSONL summary: 8 rows, 2 loss rows, steps `[1, 2]`, generator timesteps
+    `[500.0, 500.0]`, generator sigmas `[0.5, 0.5]`, 0 nonfinite scalar metrics
+- Modal L40S post-adjudication TDM unit validation
+  - `pytest tests/local_tests/tdm/ -q`
+  - `17 passed in 21.96s`
+  - App: `ap-ijqla4arb5Rfpb5HZP4xMt`
+- Modal L40S changed-file pre-commit after schedule validation
+  - passed
+  - App: `ap-BsuDShZm6exFvLDGQ1QlAz`
+- Modal L40S full pre-commit at `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc`
+  - `pre-commit run --all-files`
+  - passed
+  - App: `ap-PbwmXNpbbB4s9MpK9PgyvW`
+- DGX Spark 500-step interval-1 diagnostic run completed before the final
+  schedule fixes; it produced checkpoints through `checkpoint-500` and finite
+  metrics, but checkpoint-500 visual validation was heavily degraded.
+
+## Review Loop
+
+- Review pass 1 found terminal-mode zero-weight critic training, stale TDM test
+  README content, and leftover grad-clip debug scaffolding. The adjudicator
+  accepted all three and pushed `8d46c5a7c`.
+- Review pass 2 found stale `to_terminal` docs. The adjudicator accepted it
+  and pushed `858845bb`.
+- Review pass 3 found missing validation for malformed TDM denoising schedules.
+  The adjudicator accepted it and pushed `5c2a8b9b`.
+- Final review pass reported no actionable findings.
+
+## GPU Memory Impact
+
+This adds a three-role TDM training method using trainable student/critic LoRA
+modules plus a frozen teacher, so TDM training is inherently heavier than
+single-model fine-tuning. The example config keeps the first target LoRA-only
+and uses existing validation offload controls. No inference pipeline memory
+increase is expected.
+
+## Remaining Risk
+
+Post-final long-convergence quality is not yet proven. Earlier checkpoint-500
+videos, generated before the final generator-target/terminal-mode/schedule
+fixes, were visibly degraded. The next quality step should be a short
+post-final canary before spending on another long DGX run.
+
+# Checklist
+- [x] I ran pre-commit run --all-files and fixed all issues
+- [x] I added or updated tests for my changes
+- [x] I updated documentation if needed
+- [x] I considered GPU memory impact of my changes
+For model/pipeline changes, also check:
+- [ ] I verified targeted Wan T2V SSIM regression tests pass on L40S
+- [ ] I updated the support matrix if adding a new model
+```
 
 ## GitHub State
 
