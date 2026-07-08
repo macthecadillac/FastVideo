@@ -228,13 +228,13 @@ def test_tdm_generator_loss_samples_separate_mode_target_step_list() -> None:
         assert int(timestep.item()) in valid_steps
 
 
-def test_tdm_generator_loss_samples_terminal_target_step() -> None:
+def test_tdm_generator_loss_samples_highest_non_terminal_step_in_terminal_mode() -> None:
     method, _, _ = _build_method(method_overrides={"noise_interval_mode": "to_terminal"})
 
     for _ in range(16):
         timestep = method._sample_training_timestep(torch.device("cpu"))
 
-        assert int(timestep.item()) == 1000
+        assert int(timestep.item()) == 750
 
 
 def test_tdm_respects_generator_update_interval() -> None:
@@ -267,7 +267,7 @@ def test_tdm_separate_noise_interval_excludes_terminal_sigma() -> None:
         assert context.target_trajectory_index in {1, 2}
 
 
-def test_tdm_to_terminal_noise_interval_targets_max_sigma() -> None:
+def test_tdm_to_terminal_noise_interval_targets_highest_non_terminal_sigma() -> None:
     method, _, _ = _build_method(method_overrides={
         "noise_interval_mode": "to_terminal",
         "use_randmid": False,
@@ -277,5 +277,29 @@ def test_tdm_to_terminal_noise_interval_targets_max_sigma() -> None:
 
     context = method._sample_tdm_context(trajectory)
 
-    assert context.target_trajectory_index == int(torch.argmax(trajectory.sigmas).item())
-    assert context.sigma_to.item() == trajectory.sigmas.max().item()
+    assert context.target_trajectory_index == 1
+    assert context.sigma_to.item() == 0.75
+    assert context.sigma_to.item() < trajectory.sigmas.max().item()
+    assert context.sigma_to.item() > context.sigma_from.item()
+    assert bool((method._tdm_fake_score_weights(context) > 0).all().item())
+
+
+def test_tdm_to_terminal_fake_score_loss_trains_critic() -> None:
+    method, _, critic = _build_method(
+        generator_update_interval=2,
+        method_overrides={
+            "noise_interval_mode": "to_terminal",
+            "use_randmid": False,
+        },
+    )
+
+    loss_map, outputs, metrics = method.single_train_step({}, iteration=1)
+
+    assert float(loss_map["fake_score_loss"].item()) > 0.0
+    assert float(torch.as_tensor(metrics["tdm/fake_score/weight_mean"]).item()) > 0.0
+
+    method.backward(loss_map, outputs)
+
+    grad = critic.transformer.weight.grad
+    assert grad is not None
+    assert float(grad.abs().item()) > 0.0

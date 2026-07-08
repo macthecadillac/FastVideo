@@ -48,67 +48,39 @@ x0_hat = x_sigma - sigma * model_output
 The diffusion alpha-bar math from the reference is intentionally not used in
 production code.
 
-## Tests
+## Test Scope
 
 ```bash
 pytest tests/local_tests/tdm/ -v -s
 ```
 
-| Area | Test | Concern | Status |
-|---|---|---|---|
-| Config smoke | `test_tdm_config_smoke.py` | Example YAML parses, resolves `TDMMethod`, and declares expected roles/LoRA knobs without loading weights | `PASSED on Modal L40S` |
-| Flow bridge | `test_tdm_scheduler_math.py` | Mixed-noise transition reconstructs Wan flow noising; invalid direction raises | added, not run locally |
-| Method wiring | `test_tdm_method_unit.py` | Fake models exercise loss keys and student/critic backward routing | added, not run locally |
+| Area | Test | Concern |
+|---|---|---|
+| Config smoke | `test_tdm_config_smoke.py` | Example YAML parses, resolves `TDMMethod`, and declares expected roles/LoRA knobs without loading weights |
+| Flow bridge | `test_tdm_scheduler_math.py` | Mixed-noise transition reconstructs Wan flow noising; invalid direction raises |
+| Method wiring | `test_tdm_method_unit.py` | Fake models exercise loss keys, timestep support, fake-score weights, and student/critic backward routing |
 
-## Modal Validation Plan
+## Modal Validation
 
 Run from branch `interleavethinker` using
 `fastvideo/tests/modal/launch_l40s_job.py`, applying this branch as the patch.
 
-Planned commands:
+Suggested local-test command:
 
 ```bash
 pytest tests/local_tests/tdm/ -v -s
+```
+
+Suggested checkpoint smoke command:
+
+```bash
 python fastvideo/train/entrypoint/train.py \
     --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
     training.loop.max_train_steps=2 \
     callbacks.validation.every_steps=0
 ```
 
-Record Modal app IDs, command output, loss keys, and any blockers below before
-claiming the method is validated.
-
-## Latest Remote Evidence
-
-Modal L40S run `ap-scjQBtLeENXy1GXPNSjtoP` validated commit
-`966682510cbebb87ac0dd29e0b3cbd26716bb091` from
-`https://github.com/macthecadillac/FastVideo.git`.
-
-```text
-pytest tests/local_tests/tdm/ -v -s
-5 passed, 14 warnings in 16.94s
-```
-
-The run covered:
-
-- `test_tdm_single_train_step_reports_losses_and_routes_backward`
-- `test_tdm_respects_generator_update_interval`
-- `test_flow_transition_reconstructs_noisier_point_for_video_latents`
-- `test_flow_transition_raises_for_lower_sigma_target`
-- `test_flow_effective_noise_and_snr_match_wan_parameterization`
-
-Modal L40S run `ap-AxmFK4iKRNLINjNufDH4Zi` validated commit
-`103f9d4c764258f04e7207dcd3404b33684fbb07` after adding config smoke
-coverage.
-
-```text
-pytest tests/local_tests/tdm/ -v -s
-7 passed, 14 warnings in 16.74s
-```
-
-The run added coverage for:
-
-- `test_tdm_wan_lora_config_resolves_without_loading_weights`
-- `test_tdm_flow_bridge_smoke`
-
-Wan checkpoint training smoke has not been run yet.
+For the checkpoint smoke, request the GPU count expected by the config or
+override the distributed settings for a smaller smoke. Record Modal app IDs,
+command output, loss keys, and blockers in the issue handoff or PR body rather
+than in this durable README.

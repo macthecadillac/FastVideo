@@ -367,15 +367,11 @@ class TDMMethod(DMD2Method):
         max_sigma = sigmas.max()
 
         if self._noise_interval_mode == "to_terminal":
-            eligible = torch.nonzero(
-                torch.isclose(
-                    sigmas,
-                    max_sigma,
-                    rtol=0.0,
-                    atol=interval_eps,
-                ),
-                as_tuple=False,
-            ).flatten()
+            target_idx = self._highest_non_terminal_target_index(
+                sigmas,
+                where="TDM generator score to_terminal mode",
+            )
+            return step_list[target_idx].reshape(1)
         else:
             source_sigmas = sigmas.reshape(-1, 1)
             target_sigmas = sigmas.reshape(1, -1)
@@ -387,10 +383,33 @@ class TDMMethod(DMD2Method):
             ).flatten()
 
         if eligible.numel() == 0:
-            if self._noise_interval_mode == "to_terminal":
-                raise ValueError("TDM generator score has no terminal target timestep")
             raise ValueError("TDM generator score requires at least one valid separate-mode target timestep")
         return step_list[eligible]
+
+    def _highest_non_terminal_target_index(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        where: str,
+    ) -> int:
+        interval_eps = 1e-6
+        max_sigma = sigmas.max()
+        candidates = torch.nonzero(
+            sigmas < max_sigma - interval_eps,
+            as_tuple=False,
+        ).flatten()
+        if candidates.numel() == 0:
+            raise ValueError(f"{where} requires at least one non-terminal sigma below terminal sigma")
+
+        candidate_sigmas = sigmas[candidates]
+        target_idx = int(candidates[torch.argmax(candidate_sigmas)].item())
+        target_sigma = sigmas[target_idx]
+        if not bool(torch.any(sigmas < target_sigma - interval_eps).item()):
+            raise ValueError(f"{where} requires a lower-sigma source below the highest non-terminal sigma")
+
+        # Exact flow terminal sigma has zero SNR under the fake-score weighting,
+        # so use the highest non-degenerate target in terminal mode.
+        return target_idx
 
     def _student_trajectory(
         self,
@@ -475,9 +494,15 @@ class TDMMethod(DMD2Method):
         device = trajectory.sigmas.device
         interval_eps = 1e-6
         max_sigma = trajectory.sigmas.max()
+        to_idx: int | None = None
         if self._noise_interval_mode == "to_terminal":
+            to_idx = self._highest_non_terminal_target_index(
+                trajectory.sigmas,
+                where="TDM to_terminal noise interval",
+            )
+            target_sigma = trajectory.sigmas[to_idx]
             eligible = torch.nonzero(
-                trajectory.sigmas < max_sigma - interval_eps,
+                trajectory.sigmas < target_sigma - interval_eps,
                 as_tuple=False,
             ).flatten()
         else:
@@ -491,7 +516,7 @@ class TDMMethod(DMD2Method):
             ).flatten()
         if eligible.numel() == 0:
             if self._noise_interval_mode == "to_terminal":
-                raise ValueError("TDM trajectory has no point that can be noised to terminal sigma")
+                raise ValueError("TDM trajectory has no point that can be noised to the terminal-mode target sigma")
             raise ValueError("TDM separate noise interval requires at least two non-terminal trajectory sigmas")
 
         if self._use_randmid:
@@ -509,7 +534,8 @@ class TDMMethod(DMD2Method):
 
         sigma_from = trajectory.sigmas[from_idx].reshape(1)
         if self._noise_interval_mode == "to_terminal":
-            to_idx = int(torch.argmax(trajectory.sigmas).item())
+            if to_idx is None:
+                raise RuntimeError("TDM to_terminal mode did not resolve a target sigma")
         else:
             candidates = torch.nonzero(
                 (trajectory.sigmas > sigma_from[0] + interval_eps)
@@ -528,6 +554,7 @@ class TDMMethod(DMD2Method):
             )
             to_idx = int(candidates[to_pos].item())
 
+        assert to_idx is not None
         sigma_to = trajectory.sigmas[to_idx].reshape(1)
         timestep_from = trajectory.timesteps[from_idx].reshape(1)
         timestep_to = trajectory.timesteps[to_idx].reshape(1)
