@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-08 generator score target support patch
+Last updated: 2026-07-08 terminal-mode docs adjudication
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -485,6 +485,96 @@ handoff keeps only state needed to continue work.
     `gh` identity is `macthecadillac`; issue #775 remains open and assigned
     to `macthecadillac`; issue comments are unchanged; targeted open PR search
     for `775 OR TDM` returned `[]`; no PR draft status was changed.
+  - Signed code commit and push:
+    - Commit: `d21bc5c06ca373695a8e96fb5b16330ef9a67f1b`
+      `[fix]: align TDM generator score targets`.
+    - `git log -1 --show-signature` verified a good signature from
+      `Mac Lee <macthecadillac@gmail.com>` using subkey
+      `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+    - Pushed to `origin/issue/775-tdm`. Push succeeded with the known
+      non-fatal local `known_hosts` cross-device-link warning.
+  - Stage 3 review loop started after the pushed code commit:
+    - Spawned fresh read-only `review-code` sub-agent `Boyle`
+      (`019f3fde-d6b0-7d41-bebc-5a998da88d42`) to review
+      `macthecadillac/FastVideo issue/775-tdm` for issue #775.
+    - Reviewer returned three actionable findings:
+      (1) `noise_interval_mode="to_terminal"` targets sigma `1.0`, where
+      flow SNR is zero and fake-score weights become zero, so terminal-mode
+      critic training contributes no gradient while generator guidance samples
+      the same untrained terminal target;
+      (2) `tests/local_tests/tdm/README.md` contains stale branch/run-specific
+      validation history and should be reduced to durable test guidance;
+      (3) `fastvideo/train/callbacks/grad_clip.py` still contains
+      `debug_log` / `debug_log_steps` scaffolding from earlier diagnostics that
+      is not used by the shipped TDM config or tests.
+    - Spawned fresh independent adjudicator/fixer sub-agent `Lagrange`
+      (`019f3fe9-4d3b-72d2-8bab-9730e2e8e40d`) with only the issue/repo,
+      committed branch/commit, and reviewer findings.
+    - Adjudicator accepted all three findings and rejected none.
+    - Adjudicator implemented and pushed signed commit
+      `8d46c5a7c` `[fix]: keep TDM terminal mode trainable`.
+      `git log -1 --show-signature` verified a good signature from
+      `Mac Lee <macthecadillac@gmail.com>` using subkey
+      `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+    - Adjudicator changes:
+      - `fastvideo/train/methods/distribution_matching/tdm.py`: terminal mode
+        now targets the highest non-terminal sigma rather than exact
+        `sigma=1.0`, keeping fake-score critic weights trainable.
+      - `tests/local_tests/tdm/test_tdm_method_unit.py`: terminal-mode
+        expectations updated and nonzero critic-gradient regression coverage
+        added.
+      - `tests/local_tests/tdm/README.md`: stale branch/commit/run-specific
+        validation history removed; durable test scope and Modal command
+        guidance retained.
+      - `fastvideo/train/callbacks/grad_clip.py`: undocumented debug logging
+        knobs/scaffolding removed.
+    - Adjudicator validation:
+      - Modal L40S app `ap-qQX6tc7AbGK9FQ9XbmcIoi`:
+        `pytest tests/local_tests/tdm/ -v -s` passed,
+        `13 passed in 17.67s`.
+      - Modal L40S app `ap-kbQ8YHEfTCIETAoFVAuAlF`:
+        `pre-commit run --files ...` passed for changed files.
+    - Because the adjudicator changed code, Stage 3 must continue with a fresh
+      `review-code` pass against the updated committed branch.
+    - Spawned fresh read-only `review-code` sub-agent `Confucius`
+      (`019f3ff4-f543-7d31-a7a7-36d8de98dc4f`) to review the updated branch
+      after commit `8d46c5a7c`.
+    - Reviewer found one actionable issue: `docs/training/train_infra.md`
+      still says `noise_interval_mode` chooses a sampled larger sigma or
+      terminal sigma, but commit `8d46c5a7c` changed `to_terminal` to avoid
+      exact terminal sigma and instead target the highest trainable
+      non-terminal sigma. The reviewer judged the terminal-mode trainability
+      bug fixed, with remaining risk in public knob/docs accuracy.
+    - Fresh independent adjudicator/fixer pass for that finding:
+      - Verified `gh` identity as `macthecadillac`.
+      - Re-read issue #775: open feature request for TDM; comments remain the
+        maintainer interest comment and stale-bot comment.
+      - Targeted open PR search for `775 OR TDM` returned `[]`; no PR state was
+        changed.
+      - Accepted the finding as valid. Code and tests after `8d46c5a7c`
+        intentionally skip exact terminal `sigma=1.0` in `to_terminal`, while
+        `docs/training/train_infra.md` still described terminal sigma as the
+        target.
+      - Implemented a narrow docs fix in `docs/training/train_infra.md`: the
+        table now routes `noise_interval_mode` details to a note, and the note
+        states that `separate` samples a larger non-terminal target while
+        `to_terminal` skips exact terminal sigma because flow-SNR weighting
+        gives it zero fake-score weight, using the highest trainable
+        non-terminal target with a lower-sigma source instead.
+      - Validation after this docs-only patch:
+        `git diff --check` passed. Sandboxed changed-file pre-commit failed
+        only because `uv` could not write to `/home/toolbox/.cache/uv`; the
+        escalated rerun of
+        `uvx pre-commit run --files docs/training/train_infra.md .agents/handoffs/issue-775-handoff.md`
+        passed `codespell`, `PyMarkdown`, filename-space, and suggestion
+        hooks, with Python hooks skipped because no Python files were changed.
+        The prior Modal TDM unit validation at `8d46c5a7c` remains applicable
+        for the trainability behavior because this patch does not change
+        runtime code.
+      - Final GitHub refresh before commit/push: issue #775 remains open,
+        assigned to `macthecadillac`, and still has only the maintainer
+        interest and stale-bot comments; targeted open PR search for
+        `775 OR TDM` returned `[]`.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.

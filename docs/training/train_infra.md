@@ -350,7 +350,7 @@ method:
 | `rollout_mode` | *(required)* | Currently must be `"simulate"` |
 | `tdm_denoising_steps` | *(required)* | Few-step student trajectory schedule |
 | `student_sample_type` | `"sde"` | `"sde"` re-noises each predicted x0; `"ode"` carries effective flow noise |
-| `noise_interval_mode` | `"separate"` | Fake-score noising target: sampled larger sigma or terminal sigma |
+| `noise_interval_mode` | `"separate"` | Fake-score noising target selection mode; see note below |
 | `use_randmid` | `true` | Randomly choose the generated trajectory point for fake-score training |
 | `snr_clip` | `5.0` | Clip the flow-SNR fake-score weight |
 | `importance_weight_clip` | `10.0` | Clip mixed-noise importance weights |
@@ -363,6 +363,13 @@ complete Wan LoRA config. Treat this as a Wan adaptation of TDM, not exact
 CogVideoX reference parity. TDM follows the reference implementation's rollout
 gradient behavior: generated rollout history is not backpropagated through, and
 only the student prediction used by the generator loss carries gradients.
+
+For `noise_interval_mode: separate`, fake-score training samples a strictly
+larger non-terminal target sigma from the trajectory. For
+`noise_interval_mode: to_terminal`, FastVideo skips the exact terminal
+`sigma=1.0` target because flow-SNR weighting gives that target zero fake-score
+weight; the mode instead targets the highest trainable non-terminal sigma with
+a lower-sigma source.
 
 ### Self-Forcing (Causal DMD)
 
