@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-08 terminal-mode docs adjudication
+Last updated: 2026-07-08 post-final DGX apples-to-apples visual run launch
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -641,6 +641,62 @@ handoff keeps only state needed to continue work.
       before the final generator-target/terminal-mode/schedule-validation
       fixes, were visually degraded according to user review. The next quality
       spend should be a short post-final canary before any longer DGX run.
+    - User requested an apples-to-apples visual test with the new final code:
+      same amount of training as the degraded baseline, then the same student
+      and teacher visual comparison outputs.
+    - Refreshed GitHub state before launch: `gh` identity was
+      `macthecadillac`; issue #775 remained open and assigned to
+      `macthecadillac`; issue comments remained only the maintainer interest
+      comment and stale-bot comment; targeted open PR search for `775 OR TDM`
+      returned `[]`; no PR draft status was changed.
+    - Launched a detached DGX Spark Docker run from branch head
+      `49dda70a2be24a953fea0663f733a330b7a399ea`
+      `[misc]: record TDM review completion`. This head includes final code
+      commit `5c2a8b9baf66b9d936cb565e2031fd02d8cdfacc` plus the pushed
+      review-completion handoff commit.
+    - Run root:
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1`.
+      Container:
+      `issue775_tdm_schedule_500_49dda70_final_v1_nonroot`, id
+      `9dc80c5c537fbb888c335a685f8fa0ea82f860e4495d091379f922b0983f5d05`.
+      It is launched detached with `docker run -d`, `--user 1006:1006`, and
+      image `fastvideo-dev-nonroot:issue775`, the DGX-local non-root
+      derivative of the required FastVideo Docker image. `docker top` verified
+      wrapper, `tee`, `torchrun`, worker Python, and resource tracker all
+      appear as user `mac`.
+    - The run script clones `https://github.com/macthecadillac/FastVideo.git`,
+      checks out exact commit
+      `49dda70a2be24a953fea0663f733a330b7a399ea`, downloads
+      `wlsaidhi/crush-smol_processed_t2v`, and runs the same 500-step 1-GPU
+      Wan TDM interval-1 training shape as the degraded baseline:
+      `max_train_steps=500`, `method.generator_update_interval=1`, JSONL
+      tracking, checkpoints every `100` steps, and validation disabled during
+      training with `callbacks.validation.every_steps=0`.
+    - After training, the same run script is scheduled to generate checkpoint
+      500 student videos from
+      `/workspace/run/output/checkpoint-500` using the training validation
+      callback with `sampling_steps=[4]`,
+      `sampling_timesteps=[1000,750,500,250]`, `guidance_scale=6.0`, and output
+      dir `/workspace/run/validation_step500/student_tdm_4step`.
+      It then runs a standalone teacher/base Wan script for the same four
+      prompts with `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`, `50` inference steps,
+      `height=448`, `width=832`, `num_frames=77`, `fps=16`, and seed `1000`.
+    - Expected host output paths after completion:
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/validation_step500/student_tdm_4step/validation_step_500_inference_steps_4_video_{0..3}.mp4`
+      and
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/validation_step500/teacher_wan_50step/teacher_wan_50step_prompt{0..3}.mp4`.
+      Prompt mapping will be saved at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/validation_step500/teacher_wan_50step/prompts.json`.
+    - Startup status checks:
+      `docker inspect` reports
+      `status=running running=true exit=0 oom=false`, started
+      `2026-07-08T06:35:06.698493347Z`. The log entered
+      `training_to_500` at `2026-07-08T06:35:33+00:00` and applied the
+      expected CLI overrides. No tracker rows or checkpoints existed at the
+      last startup poll because the process was still downloading/loading the
+      Wan model snapshot; cache size had reached `13G` with active incomplete
+      HF/Xet shard files. Disk had `2.8T` free. Leave the detached container
+      running unless the user asks to stop or relaunch it.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
