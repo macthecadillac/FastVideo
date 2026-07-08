@@ -65,8 +65,9 @@ method:
   importance_weight_clip: 10.0
 
   # Generator target controls.
-  # Generator score timesteps are sampled from tdm_denoising_steps so the
-  # trajectory rollout and generator score target use the same few-step grid.
+  # Generator score timesteps are sampled from the fake-score target support
+  # derived from tdm_denoising_steps. With separate noising, terminal and
+  # lowest-sigma endpoints are excluded from the generator score target.
   normalize_generator_delta: true
   use_huber: false
   huber_c: 0.001

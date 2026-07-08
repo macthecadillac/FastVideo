@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-07 DGX Spark checkpoint-500 validation completed
+Last updated: 2026-07-08 generator score target support patch
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -400,6 +400,91 @@ handoff keeps only state needed to continue work.
       and teacher/base Wan 50-step videos. Technically, the built-in training
       validation callback produced the student videos only; the teacher videos
       were generated separately for comparison using the same prompt set.
+  - User visually inspected the checkpoint-500 validation outputs and reported
+    all four student clips are still heavily degraded, to the point the frame
+    contents are not recognizable. Treat this as a failed quality validation
+    signal, not as sufficient evidence to spend on a longer run with the same
+    settings.
+  - Refreshed GitHub state before the next code change on 2026-07-08:
+    `gh` identity is `macthecadillac`; issue #775 remains open and assigned to
+    `macthecadillac`; issue comments are still only the maintainer interest
+    comment from `zhisbug` and the stale-bot comment; targeted open PR search
+    for `775 OR TDM` returned `[]`; no PR draft status was changed.
+  - Next hypothesis selected by the user: align generator score timesteps with
+    the fake-score target support, not the full TDM rollout grid. Before this
+    patch, generator score sampling used every configured TDM denoising step
+    (`1000`, `750`, `500`, `250`). Under the shipped `noise_interval_mode:
+    separate` schedule, fake-score targets are only the valid non-terminal
+    target sigmas with a lower-sigma source, which for the current grid are
+    `750` and `500`. Sampling generator guidance at `1000` and `250` therefore
+    asks the critic for guidance where it is not trained by the separate-mode
+    fake-score objective.
+  - Patch applied in this work segment:
+    - `fastvideo/train/methods/distribution_matching/tdm.py` now derives a
+      generator score timestep list from valid fake-score target support.
+      With `noise_interval_mode: separate`, it excludes terminal max-sigma
+      and lowest-sigma endpoints; with `noise_interval_mode: to_terminal`, it
+      uses the terminal max-sigma timestep.
+    - `tests/local_tests/tdm/test_tdm_method_unit.py` now expects separate-mode
+      generator score samples only from `{750, 500}` and covers terminal-mode
+      sampling.
+    - `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml`
+      documents the derived fake-score-target generator support.
+  - Local non-test checks after the patch:
+    `git diff --check` passed;
+    `python -m py_compile fastvideo/train/methods/distribution_matching/tdm.py tests/local_tests/tdm/test_tdm_method_unit.py`
+    passed; changed-file line-length scan reported no lines over 120 chars.
+  - Remote validation still needed after this handoff update: Modal L40S
+    targeted `pytest tests/local_tests/tdm/ -v -s`, then a short real Wan TDM
+    diagnostic run to confirm JSONL generator metrics only contain
+    `tdm/generator/timestep` values `750.0` and `500.0` under the shipped
+    separate-mode config. Do not launch another long DGX convergence run until
+    a short canary shows at least recognizable prompt structure.
+  - Remote validation completed after the patch:
+    - Modal L40S targeted unit/config/scheduler validation app
+      `ap-dkepDHPikkLfo8jyen37kB` ran
+      `pytest tests/local_tests/tdm/ -v -s` from base commit
+      `ebd07ad8f90f4528c5cc6ceb305c656de2c8d8c2` with the local patch
+      applied. Result: `12 passed in 20.86s`.
+    - A first 4x L40S real-training smoke app
+      `ap-wGA8Ytajt1vBZerX7wUqa0` was queued waiting for `GPU_L40S`
+      capacity and was stopped before running any container.
+    - Modal H100:1 real-training smoke app
+      `ap-v4R2pPiPPxl4zIC6FCoMnP` ran two Wan TDM training steps from the
+      same base commit plus local patch. Because this was a smoke after L40S
+      capacity was unavailable, it overrode distributed settings to
+      `num_gpus=1`, `sp_size=1`, `tp_size=1`, `hsdp_replicate_dim=1`, and
+      `hsdp_shard_dim=1`; used the staged
+      `crush-smol_processed_t2v` parquet dataset; set
+      `method.generator_update_interval=1`; disabled checkpoint saves and
+      validation; and used JSONL-only tracking under
+      `/root/data/tdm_diag_generator_target_support_20260708_h100_patch`.
+    - The H100 smoke completed successfully and committed the Modal volume.
+      The final parser assertion printed
+      `GENERATOR_TIMESTEPS [500.0, 500.0]` and
+      `GENERATOR_SIGMAS [0.5, 0.5]`, satisfying the assertion that generator
+      score support is a subset of `{750.0, 500.0}` / `{0.75, 0.5}` and no
+      longer includes `1000` or `250`.
+    - Downloaded metrics to
+      `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_diag_generator_target_support_20260708_h100_patch/metrics.jsonl`.
+      Local summary: `8` JSONL rows, `2` loss/generator rows, steps `[1, 2]`,
+      generator timesteps `[500.0, 500.0]`, generator sigmas `[0.5, 0.5]`,
+      and `0` nonfinite scalar metrics.
+    - The only warning was the known non-fatal NCCL
+      `destroy_process_group()` shutdown warning after process exit.
+  - Changed-file lint/type checks after validation:
+    - `uvx pre-commit run --files fastvideo/train/methods/distribution_matching/tdm.py tests/local_tests/tdm/test_tdm_method_unit.py examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml .agents/handoffs/issue-775-handoff.md`
+      passed `yapf`, `ruff`, `codespell`, filename-space, and suggestion
+      hooks; PyMarkdown/actionlint had no files to check; the mypy hook failed
+      before checking files with the known hyphenated worktree basename error
+      `issue-775-tdm is not a valid Python package name`.
+    - Direct fallback
+      `uvx mypy --explicit-package-bases fastvideo/train/methods/distribution_matching/tdm.py`
+      passed with `Success: no issues found in 1 source file`.
+  - Refreshed GitHub state again before committing/pushing this patch:
+    `gh` identity is `macthecadillac`; issue #775 remains open and assigned
+    to `macthecadillac`; issue comments are unchanged; targeted open PR search
+    for `775 OR TDM` returned `[]`; no PR draft status was changed.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.

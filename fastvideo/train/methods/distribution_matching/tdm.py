@@ -357,6 +357,41 @@ class TDMMethod(DMD2Method):
         )
         return sigmas[idx]
 
+    def _get_generator_score_step_list(
+        self,
+        device: torch.device,
+    ) -> torch.Tensor:
+        step_list = self._get_denoising_step_list(device)
+        sigmas = self._timestep_to_sigma(step_list)
+        interval_eps = 1e-6
+        max_sigma = sigmas.max()
+
+        if self._noise_interval_mode == "to_terminal":
+            eligible = torch.nonzero(
+                torch.isclose(
+                    sigmas,
+                    max_sigma,
+                    rtol=0.0,
+                    atol=interval_eps,
+                ),
+                as_tuple=False,
+            ).flatten()
+        else:
+            source_sigmas = sigmas.reshape(-1, 1)
+            target_sigmas = sigmas.reshape(1, -1)
+            non_terminal_targets = sigmas < max_sigma - interval_eps
+            has_source = (target_sigmas > source_sigmas + interval_eps).any(dim=0)
+            eligible = torch.nonzero(
+                has_source & non_terminal_targets,
+                as_tuple=False,
+            ).flatten()
+
+        if eligible.numel() == 0:
+            if self._noise_interval_mode == "to_terminal":
+                raise ValueError("TDM generator score has no terminal target timestep")
+            raise ValueError("TDM generator score requires at least one valid separate-mode target timestep")
+        return step_list[eligible]
+
     def _student_trajectory(
         self,
         batch: TrainingBatch,
@@ -651,7 +686,7 @@ class TDMMethod(DMD2Method):
         }
 
     def _sample_training_timestep(self, device: torch.device) -> torch.Tensor:
-        step_list = self._get_denoising_step_list(device)
+        step_list = self._get_generator_score_step_list(device)
         index = torch.randint(
             0,
             len(step_list),

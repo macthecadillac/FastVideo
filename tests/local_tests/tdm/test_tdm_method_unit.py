@@ -198,8 +198,8 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert metrics["update_student"] == 1.0
     generator_timestep = float(torch.as_tensor(metrics["tdm/generator/timestep"]).item())
     generator_sigma = float(torch.as_tensor(metrics["tdm/generator/sigma"]).item())
-    assert generator_timestep in {1000.0, 750.0, 500.0, 250.0}
-    assert generator_sigma in {1.0, 0.75, 0.5, 0.25}
+    assert generator_timestep in {750.0, 500.0}
+    assert generator_sigma in {0.75, 0.5}
     assert "tdm/generator/raw_delta_abs_mean" in metrics
     assert "tdm/generator/target_delta_abs_mean" in metrics
     assert "tdm/generator/normalization_denom" in metrics
@@ -218,14 +218,23 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert critic.backward_calls == 1
 
 
-def test_tdm_generator_loss_samples_tdm_step_list() -> None:
+def test_tdm_generator_loss_samples_separate_mode_target_step_list() -> None:
     method, _, _ = _build_method()
-    valid_steps = {1000, 750, 500, 250}
+    valid_steps = {750, 500}
 
     for _ in range(16):
         timestep = method._sample_training_timestep(torch.device("cpu"))
 
         assert int(timestep.item()) in valid_steps
+
+
+def test_tdm_generator_loss_samples_terminal_target_step() -> None:
+    method, _, _ = _build_method(method_overrides={"noise_interval_mode": "to_terminal"})
+
+    for _ in range(16):
+        timestep = method._sample_training_timestep(torch.device("cpu"))
+
+        assert int(timestep.item()) == 1000
 
 
 def test_tdm_respects_generator_update_interval() -> None:
