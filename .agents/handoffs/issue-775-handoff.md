@@ -697,6 +697,19 @@ handoff keeps only state needed to continue work.
       Wan model snapshot; cache size had reached `13G` with active incomplete
       HF/Xet shard files. Disk had `2.8T` free. Leave the detached container
       running unless the user asks to stop or relaunch it.
+    - Follow-up training poll: the same container remained
+      `status=running running=true exit=0 oom=false` and had reached
+      step `10/500`. Tracker summary from
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/output/tracker/metrics.jsonl`:
+      `40` JSONL rows, steps `1..10`, `10` loss rows, `0` nonfinite scalar
+      metrics. Generator diagnostics sampled timesteps `[500.0, 750.0]`,
+      confirming the final code no longer samples generator guidance from the
+      earlier off-support `1000` or `250` endpoints. Last loss row at step
+      `10`: `total_loss=0.3162887692451477`,
+      `generator_loss=0.31520676612854004`,
+      `fake_score_loss=0.001082007889635861`,
+      `tdm/generator/timestep=500.0`, `tdm/generator/sigma=0.5`, and
+      `step_time_sec=106.68669968913309`.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
