@@ -348,7 +348,7 @@ method:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `rollout_mode` | *(required)* | Currently must be `"simulate"` |
-| `tdm_denoising_steps` | *(required)* | Few-step student trajectory schedule |
+| `tdm_denoising_steps` | *(required)* | Few-step student trajectory schedule; mapped sigmas must start at scheduler terminal noise and strictly decrease |
 | `student_sample_type` | `"sde"` | `"sde"` re-noises each predicted x0; `"ode"` carries effective flow noise |
 | `noise_interval_mode` | `"separate"` | Fake-score noising target selection mode; see note below |
 | `use_randmid` | `true` | Randomly choose the generated trajectory point for fake-score training |

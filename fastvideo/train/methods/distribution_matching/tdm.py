@@ -326,6 +326,8 @@ class TDMMethod(DMD2Method):
             dtype=torch.long,
             device=device,
         )
+        if steps.numel() < 2:
+            raise ValueError("method.tdm_denoising_steps must contain at least two steps for TDM")
 
         warp = self.method_config.get("warp_denoising_step", None)
         if warp is None:
@@ -336,6 +338,20 @@ class TDMMethod(DMD2Method):
                 torch.tensor([0], dtype=torch.float32),
             )).to(device)
             steps = timesteps[int(self.student.num_train_timesteps) - steps].long()
+
+        sigmas = self._timestep_to_sigma(steps)
+        scheduler_sigmas = self.student.noise_scheduler.sigmas.to(device=device, dtype=torch.float32)
+        terminal_sigma = scheduler_sigmas.max()
+        if not bool(torch.isclose(
+                sigmas[0],
+                terminal_sigma,
+                rtol=0.0,
+                atol=1e-6,
+        ).item()):
+            raise ValueError("method.tdm_denoising_steps must start at the scheduler terminal sigma because "
+                             "TDM rollout starts from pure noise")
+        if not bool(torch.all(sigmas[:-1] > sigmas[1:] + 1e-6).item()):
+            raise ValueError("method.tdm_denoising_steps must map to strictly decreasing scheduler sigmas")
 
         self._denoising_step_list = steps
         return steps

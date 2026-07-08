@@ -6,6 +6,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Literal
 
+import pytest
 import torch
 
 from fastvideo.pipelines.pipeline_batch_info import TrainingBatch
@@ -235,6 +236,25 @@ def test_tdm_generator_loss_samples_highest_non_terminal_step_in_terminal_mode()
         timestep = method._sample_training_timestep(torch.device("cpu"))
 
         assert int(timestep.item()) == 750
+
+
+@pytest.mark.parametrize(
+    ("steps", "match"),
+    [
+        ([1000], "at least two"),
+        ([750, 500], "terminal sigma"),
+        ([1000, 750, 750], "strictly decreasing"),
+        ([1000, 500, 750], "strictly decreasing"),
+    ],
+)
+def test_tdm_rejects_invalid_denoising_step_schedules(
+    steps: list[int],
+    match: str,
+) -> None:
+    method, _, _ = _build_method(method_overrides={"tdm_denoising_steps": steps})
+
+    with pytest.raises(ValueError, match=match):
+        method._get_denoising_step_list(torch.device("cpu"))
 
 
 def test_tdm_respects_generator_update_interval() -> None:
