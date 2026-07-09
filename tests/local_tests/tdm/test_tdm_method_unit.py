@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import pytest
 import torch
+from torch.testing import assert_close
 
 from fastvideo.pipelines.pipeline_batch_info import TrainingBatch
 from fastvideo.train.methods.distribution_matching.tdm import TDMMethod
@@ -53,6 +54,28 @@ class _FakeFlowScheduler:
         return (1.0 - sigma) * clean_latent + sigma * noise
 
 
+class _ShiftedFlowScheduler(_FakeFlowScheduler):
+
+    shift = 8.0
+
+    def __init__(self) -> None:
+        raw_sigmas = torch.tensor(
+            [1.0, 0.75, 0.5, 0.25, 0.0],
+            dtype=torch.float32,
+        )
+        shifted_sigmas = self.shift * raw_sigmas / (1.0 + (self.shift - 1.0) * raw_sigmas)
+        self.timesteps = shifted_sigmas * 1000.0
+        self.sigmas = shifted_sigmas
+        self.config = SimpleNamespace(
+            num_train_timesteps=1000,
+            use_dynamic_shifting=False,
+            shift_terminal=None,
+            use_karras_sigmas=False,
+            use_exponential_sigmas=False,
+            use_beta_sigmas=False,
+        )
+
+
 class _TinyRoleModel(ModelBase):
 
     def __init__(
@@ -69,7 +92,7 @@ class _TinyRoleModel(ModelBase):
         self.transformer.requires_grad_(trainable)
         self.noise_scheduler = _FakeFlowScheduler()
         self.backward_calls = 0
-        self.predict_calls: list[tuple[bool, str]] = []
+        self.predict_calls: list[tuple[bool, str, float, bool]] = []
 
     @property
     def device(self) -> torch.device:
@@ -115,8 +138,14 @@ class _TinyRoleModel(ModelBase):
         cfg_uncond: dict[str, Any] | None = None,
         attn_kind: Literal["dense", "vsa"] = "dense",
     ) -> torch.Tensor:
-        del timestep, batch, cfg_uncond
-        self.predict_calls.append((conditional, attn_kind))
+        del batch, cfg_uncond
+        timestep_value = float(timestep.reshape(-1)[0].item())
+        self.predict_calls.append((
+            conditional,
+            attn_kind,
+            timestep_value,
+            torch.is_grad_enabled(),
+        ))
         scale = self.transformer.weight.reshape(())
         offset = {
             ("student", True): 0.05,
@@ -204,6 +233,7 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert "tdm/generator/raw_delta_abs_mean" in metrics
     assert "tdm/generator/target_delta_abs_mean" in metrics
     assert "tdm/generator/normalization_denom" in metrics
+    assert metrics["tdm/generator/trajectory_index"] in {1.0, 2.0}
     assert metrics["tdm/generator/normalize_delta"] == 1.0
     assert "tdm/fake_score/sigma_from" in metrics
     assert "tdm/fake_score/sigma_to" in metrics
@@ -217,6 +247,13 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
 
     assert student.backward_calls == 1
     assert critic.backward_calls == 1
+
+    grad_student_calls = [
+        call for call in student.predict_calls
+        if call[0] is True and call[1] == "vsa" and call[3] is True
+    ]
+    assert len(grad_student_calls) == 1
+    assert grad_student_calls[0][2] in {750.0, 500.0}
 
 
 def test_tdm_generator_loss_samples_separate_mode_target_step_list() -> None:
@@ -236,6 +273,21 @@ def test_tdm_generator_loss_samples_highest_non_terminal_step_in_terminal_mode()
         timestep = method._sample_training_timestep(torch.device("cpu"))
 
         assert int(timestep.item()) == 750
+
+
+def test_tdm_sigma_lookup_treats_explicit_steps_as_raw_wan_timesteps() -> None:
+    method, student, _ = _build_method()
+    student.noise_scheduler = _ShiftedFlowScheduler()
+
+    sigmas = method._timestep_to_sigma(torch.tensor([1000, 750, 500, 250]))
+
+    expected = torch.tensor([
+        1.0,
+        8.0 * 0.75 / (1.0 + 7.0 * 0.75),
+        8.0 * 0.5 / (1.0 + 7.0 * 0.5),
+        8.0 * 0.25 / (1.0 + 7.0 * 0.25),
+    ])
+    assert_close(sigmas, expected)
 
 
 @pytest.mark.parametrize(
@@ -275,7 +327,7 @@ def test_tdm_respects_generator_update_interval() -> None:
 def test_tdm_separate_noise_interval_excludes_terminal_sigma() -> None:
     method, _, _ = _build_method(method_overrides={"noise_interval_mode": "separate"})
     batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
-    trajectory = method._student_trajectory(batch, with_grad=False)
+    trajectory = method._student_trajectory(batch)
     max_sigma = trajectory.sigmas.max().item()
 
     for _ in range(16):
@@ -293,7 +345,7 @@ def test_tdm_to_terminal_noise_interval_targets_highest_non_terminal_sigma() -> 
         "use_randmid": False,
     })
     batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
-    trajectory = method._student_trajectory(batch, with_grad=False)
+    trajectory = method._student_trajectory(batch)
 
     context = method._sample_tdm_context(trajectory)
 

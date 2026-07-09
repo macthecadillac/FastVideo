@@ -23,7 +23,7 @@ models:
     init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers     # required: HF repo or local path
     trainable: true                                   # default: true
     disable_custom_init_weights: false                # default: false
-    flow_shift: 3.0                                   # default: 3.0
+    flow_shift: null                                  # default: inherit training.pipeline.flow_shift, fallback 3.0
     enable_gradient_checkpointing_type: null           # default: null (falls back to training.model)
 
   teacher:

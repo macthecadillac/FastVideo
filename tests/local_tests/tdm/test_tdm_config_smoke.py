@@ -5,15 +5,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 from torch.testing import assert_close
 
+from fastvideo.models.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
+from fastvideo.pipelines.stages.denoising import DmdDenoisingStage
 from fastvideo.train.methods.distribution_matching.tdm import (
     TDMMethod,
     flow_transition_to_noisier_sigma,
 )
+from fastvideo.train.models.wan import WanModel
 from fastvideo.train.utils.config import load_run_config
 from fastvideo.train.utils.instantiate import resolve_target
+
+
+class _DenoisingStageTransformerStub(torch.nn.Module):
+
+    hidden_size = 128
+    num_attention_heads = 8
 
 
 def test_tdm_wan_lora_config_resolves_without_loading_weights() -> None:
@@ -32,10 +42,42 @@ def test_tdm_wan_lora_config_resolves_without_loading_weights() -> None:
     assert cfg.method["rollout_mode"] == "simulate"
     assert cfg.method["tdm_denoising_steps"] == [1000, 750, 500, 250]
     assert cfg.method["noise_interval_mode"] == "separate"
-    assert cfg.method["student_sample_type"] == "sde"
+    assert cfg.method["student_sample_type"] == "ode"
     assert "enable_gradient_in_rollout" not in cfg.method
     assert cfg.training.pipeline_config is not None
     assert getattr(cfg.training.pipeline_config, "flow_shift") == 8
+    assert getattr(cfg.training.pipeline_config, "dmd_sample_type") == "ode"
+
+
+def test_tdm_wan_config_flow_shift_reaches_role_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = Path("examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml")
+    cfg = load_run_config(str(config_path))
+
+    def fake_load_transformer(self: WanModel, **kwargs: object) -> torch.nn.Module:
+        del self, kwargs
+        return torch.nn.Linear(1, 1)
+
+    monkeypatch.setattr(WanModel, "_load_transformer", fake_load_transformer)
+
+    model = WanModel(
+        init_from=str(cfg.models["student"]["init_from"]),
+        training_config=cfg.training,
+        trainable=False,
+    )
+
+    assert model.noise_scheduler.shift == 8.0
+    assert model.timestep_shift == 8.0
+
+
+def test_dmd_denoising_stage_preserves_configured_scheduler_shift() -> None:
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=5.0)
+    stage = DmdDenoisingStage(
+        transformer=_DenoisingStageTransformerStub(),
+        scheduler=scheduler,
+    )
+
+    assert stage.scheduler is scheduler
+    assert stage.scheduler.shift == 5.0
 
 
 def test_tdm_flow_bridge_smoke() -> None:

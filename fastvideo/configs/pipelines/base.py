@@ -74,6 +74,7 @@ class PipelineConfig:
 
     # DMD parameters
     dmd_denoising_steps: list[int] | None = field(default=None)
+    dmd_sample_type: str = "sde"
 
     # Wan2.2 task modifiers
     ti2v_task: bool = False
@@ -188,6 +189,13 @@ class PipelineConfig:
             type=parse_int_list,
             default=PipelineConfig.dmd_denoising_steps,
             help="Comma-separated list of denoising steps (e.g., '1000,757,522')",
+        )
+        parser.add_argument(
+            f"--{prefix_with_dot}dmd-sample-type",
+            type=str,
+            choices=["sde", "ode"],
+            default=PipelineConfig.dmd_sample_type,
+            help="DMD trajectory update between explicit denoising steps",
         )
 
         # Add VAE configuration arguments

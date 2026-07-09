@@ -276,12 +276,13 @@ class TDMMethod(DMD2Method):
         student_ctx = None
         generator_metrics: dict[str, LogScalar] = {}
         if update_student:
-            trajectory = self._student_trajectory(training_batch, with_grad=True)
+            with torch.no_grad():
+                trajectory = self._student_trajectory(training_batch)
             student_ctx = (
                 training_batch.timesteps,
                 training_batch.attn_metadata_vsa,
             )
-            generator_loss, generator_metrics = self._tdm_generator_loss(trajectory.final_clean, training_batch)
+            generator_loss, generator_metrics = self._tdm_generator_loss(trajectory, training_batch)
 
         (
             fake_score_loss,
@@ -358,8 +359,6 @@ class TDMMethod(DMD2Method):
 
     def _timestep_to_sigma(self, timestep: torch.Tensor) -> torch.Tensor:
         scheduler = self.student.noise_scheduler
-        sigmas = scheduler.sigmas.to(device=timestep.device, dtype=torch.float32)
-        timesteps = scheduler.timesteps.to(device=timestep.device, dtype=torch.float32)
         t = timestep.to(device=timestep.device, dtype=torch.float32)
         if t.ndim == 0:
             t = t.reshape(1)
@@ -367,6 +366,29 @@ class TDMMethod(DMD2Method):
             t = t.flatten(0, 1)
         elif t.ndim != 1:
             raise ValueError(f"Invalid timestep shape: {tuple(timestep.shape)}")
+
+        config = getattr(scheduler, "config", None)
+        shift = getattr(scheduler, "shift", None)
+        num_train_timesteps = getattr(
+            config,
+            "num_train_timesteps",
+            getattr(scheduler, "num_train_timesteps", None),
+        )
+        has_static_flow_schedule = (shift is not None and num_train_timesteps is not None
+                                    and not bool(getattr(config, "use_dynamic_shifting", False))
+                                    and not getattr(config, "shift_terminal", None)
+                                    and not bool(getattr(config, "use_karras_sigmas", False))
+                                    and not bool(getattr(config, "use_exponential_sigmas", False))
+                                    and not bool(getattr(config, "use_beta_sigmas", False)))
+        if has_static_flow_schedule:
+            assert shift is not None
+            assert num_train_timesteps is not None
+            flow_shift = float(shift)
+            sigma = t / float(num_train_timesteps)
+            return flow_shift * sigma / (1.0 + (flow_shift - 1.0) * sigma)
+
+        sigmas = scheduler.sigmas.to(device=timestep.device, dtype=torch.float32)
+        timesteps = scheduler.timesteps.to(device=timestep.device, dtype=torch.float32)
         idx = torch.argmin(
             (timesteps.unsqueeze(0) - t.unsqueeze(1)).abs(),
             dim=1,
@@ -430,8 +452,6 @@ class TDMMethod(DMD2Method):
     def _student_trajectory(
         self,
         batch: TrainingBatch,
-        *,
-        with_grad: bool,
     ) -> TDMTrajectory:
         latents = batch.latents
         if latents is None:
@@ -454,8 +474,7 @@ class TDMMethod(DMD2Method):
 
         for step_idx, timestep_scalar in enumerate(step_list):
             timestep = timestep_scalar.reshape(1)
-            enable_grad = with_grad and step_idx == len(step_list) - 1
-            with torch.set_grad_enabled(enable_grad):
+            with torch.no_grad():
                 pred_x0 = self.student.predict_x0(
                     current_noisy,
                     timestep,
@@ -480,7 +499,9 @@ class TDMMethod(DMD2Method):
                     dtype=dtype,
                     generator=self.cuda_generator,
                 )
-                current_noisy = self.student.add_noise(pred_x0, noise, next_timestep)
+                sigma_next = self._timestep_to_sigma(next_timestep)
+                sigma_next_b = _expand_sigma_for_latents(sigma_next, current_noisy)
+                current_noisy = (1.0 - sigma_next_b) * pred_x0 + sigma_next_b * noise
             else:
                 sigma_cur = self._timestep_to_sigma(timestep)
                 sigma_next = self._timestep_to_sigma(next_timestep)
@@ -619,7 +640,7 @@ class TDMMethod(DMD2Method):
         batch: TrainingBatch,
     ) -> tuple[torch.Tensor, Any, dict[str, Any], dict[str, LogScalar]]:
         with torch.no_grad():
-            trajectory = self._student_trajectory(batch, with_grad=False)
+            trajectory = self._student_trajectory(batch)
             context = self._sample_tdm_context(trajectory)
 
         fake_x0 = self.critic.predict_x0(
@@ -740,9 +761,22 @@ class TDMMethod(DMD2Method):
         )
         return step_list[index].reshape(1)
 
+    def _sample_generator_trajectory_index(
+        self,
+        trajectory: TDMTrajectory,
+    ) -> int:
+        timestep = self._sample_training_timestep(trajectory.timesteps.device)
+        matches = torch.nonzero(
+            trajectory.timesteps == timestep.reshape(()),
+            as_tuple=False,
+        ).flatten()
+        if matches.numel() == 0:
+            raise RuntimeError("Sampled generator timestep is not present in the TDM trajectory")
+        return int(matches[0].item())
+
     def _tdm_generator_loss(
         self,
-        generator_pred_x0: torch.Tensor,
+        trajectory: TDMTrajectory,
         batch: TrainingBatch,
     ) -> tuple[torch.Tensor, dict[str, LogScalar]]:
         guidance_scale = get_optional_float(
@@ -752,17 +786,22 @@ class TDMMethod(DMD2Method):
         )
         if guidance_scale is None:
             guidance_scale = 1.0
+
+        trajectory_index = self._sample_generator_trajectory_index(trajectory)
+        timestep = trajectory.timesteps[trajectory_index].reshape(1)
+        noisy_latents = trajectory.noisy_latents[trajectory_index].detach()
+
+        generator_pred_x0 = self.student.predict_x0(
+            noisy_latents,
+            timestep,
+            batch,
+            conditional=True,
+            cfg_uncond=self._cfg_uncond,
+            attn_kind="vsa",
+        )
         device = generator_pred_x0.device
 
         with torch.no_grad():
-            timestep = self._sample_training_timestep(device)
-            noise = torch.randn(
-                generator_pred_x0.shape,
-                device=device,
-                dtype=generator_pred_x0.dtype,
-                generator=self.cuda_generator,
-            )
-            noisy_latents = self.student.add_noise(generator_pred_x0.detach(), noise, timestep)
             faker_x0 = self.critic.predict_x0(
                 noisy_latents,
                 timestep,
@@ -801,9 +840,11 @@ class TDMMethod(DMD2Method):
         loss = self._elementwise_loss(generator_pred_x0, target)
         batch.dmd_latent_vis_dict.update({
             "dmd_timestep": timestep.float().detach(),
+            "generator_timestep": timestep.float().detach(),
             "generator_pred_video": generator_pred_x0.detach(),
         })
         metrics: dict[str, LogScalar] = {
+            "tdm/generator/trajectory_index": float(trajectory_index),
             "tdm/generator/timestep": timestep.detach().float().mean(),
             "tdm/generator/sigma": sigma.detach().float().mean(),
             "tdm/generator/raw_delta_abs_mean": raw_delta_abs_mean,

@@ -1,11 +1,151 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-08 post-final DGX apples-to-apples visual run launch
+Last updated: 2026-07-09 reviewer-guided TDM objective/schedule patch after Modal validation
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
 handoff keeps only state needed to continue work.
+
+## 2026-07-09 Reviewer-Guided Objective/Schedule Patch
+
+- Resumed in `/tmp/fastvideo-worktrees/issue-775-tdm` on branch
+  `issue/775-tdm`, initially clean at pushed commit
+  `7c6ddd8ee`. The user supplied an independent review identifying three
+  likely quality culprits and asked to try those solutions and train again.
+- Refreshed GitHub state with `gh` as `macthecadillac` before committing:
+  issue #775 remains open, assigned to `macthecadillac`, with no new issue
+  comments beyond the existing collaborator/stale-bot comments. Targeted open
+  PR search for `775 OR TDM` returned `[]`; no PR draft status was changed.
+- Reviewer culprits evaluated and implemented:
+  - **Flow schedule mismatch**: `pipeline.flow_shift: 8` in the TDM config was
+    not reaching Wan role schedulers because `WanModel` defaulted to
+    `flow_shift=3.0` unless each role set it explicitly. Patched
+    `fastvideo/train/models/wan/wan.py` so an omitted role `flow_shift`
+    inherits `training_config.pipeline_config.flow_shift`, with explicit role
+    kwargs still taking precedence and a final Wan fallback of `3.0`.
+    `WanCausalModel` now passes through the same `None` default. Also changed
+    `_init_timestep_mechanics()` to mirror the actual scheduler shift instead
+    of separately reading the pipeline config.
+  - **Validation scheduler override**: `DmdDenoisingStage` previously replaced
+    the scheduler it was passed with a new `FlowMatchEulerDiscreteScheduler`
+    hardcoded to `shift=8.0`. Patched it to preserve the configured scheduler,
+    so validation follows the pipeline scheduler construction path instead of a
+    hidden stage-local override.
+  - **Terminal-only generator gradients**: `TDMMethod.single_train_step()` now
+    rolls the student trajectory without gradients, then
+    `_tdm_generator_loss(...)` samples a non-terminal configured TDM trajectory
+    point, recomputes that student prediction with gradients, and evaluates
+    teacher/critic targets at the same trajectory state. The helper now logs
+    `tdm/generator/trajectory_index` and keeps `dmd_latent_vis_dict`
+    `generator_timestep` aligned with the sampled generator timestep. The
+    rollout helper now enforces no-grad internally; the only student-gradient
+    path is the sampled recomputation in generator loss.
+  - **Stochastic default path**: the Wan TDM LoRA YAML now sets
+    `method.student_sample_type: ode` and `pipeline.dmd_sample_type: ode`.
+    Added `PipelineConfig.dmd_sample_type` plus CLI parsing for
+    `--pipeline.dmd-sample-type`, defaulting to existing `sde` behavior for
+    other configs. In ODE mode, `DmdDenoisingStage` carries the effective flow
+    noise from the current state to the next configured timestep instead of
+    drawing new noise between steps.
+- Tests/config coverage updated:
+  - `tests/local_tests/tdm/test_tdm_method_unit.py` now asserts exactly one
+    gradient-enabled student VSA prediction happens for generator loss and
+    that it occurs at trajectory timestep `750` or `500`, not the terminal
+    `250` final point.
+  - `tests/local_tests/tdm/test_tdm_config_smoke.py` now asserts the TDM config
+    uses ODE rollout/validation, that a Wan role built from the config inherits
+    `pipeline.flow_shift == 8`, and that `DmdDenoisingStage` preserves a
+    caller-provided scheduler and shift.
+  - `examples/train/configs/example.yaml` now documents the role-level
+    `flow_shift` default as inheriting `training.pipeline.flow_shift` when
+    available, with Wan fallback `3.0`.
+- Local non-test checks completed:
+  - `git diff --check`: passed.
+  - `python -m py_compile` on all changed Python files: passed.
+  - Changed-file `pre-commit run --files ...` from the issue worktree passed
+    `yapf`, `ruff`, and `codespell`, but the mypy hook failed before checking
+    files with the known realpath issue `issue-775-tdm is not a valid Python
+    package name`.
+  - Re-ran the same changed-file pre-commit command in a temporary validation
+    clone at `/tmp/fastvideo_worktrees/issue_775_tdm_clone` with the exact
+    same diff applied. All hooks passed, including mypy.
+- Modal validation completed before commit:
+  - First targeted TDM local-test app `ap-s9sdm73lczyzjd1pxHJt4u` exposed a
+    test-fixture bug: `DmdDenoisingStage` construction needs transformer
+    metadata, and the smoke test used a bare `torch.nn.Identity`. Patched the
+    test to use a minimal transformer stub with `hidden_size` and
+    `num_attention_heads`.
+  - Modal L40S app `ap-MqL3ZXebN28IDjqArPhAi0` then ran
+    `pytest tests/local_tests/tdm/ -v -s` from base commit `7c6ddd8ee` with
+    the local patch applied. Result before the later shifted-sigma fix:
+    `19 passed in 18.33s`.
+  - First two-step real-training smoke app `ap-dFqUVQ8af0L7Ih9ufyiD1D`
+    completed training but intentionally failed a post-run assertion:
+    generator sigma for raw timestep `750` was `0.750257670879364`. Downloaded
+    tracker/config to
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_diag_reviewer_flow_ode_2step_7c6ddd8e_patch_v1/tracker/`.
+    The config confirmed `pipeline_config.flow_shift == 8`,
+    `pipeline_config.dmd_sample_type == "ode"`, and
+    `method.student_sample_type == "ode"`, so the remaining bug was not config
+    parsing. The root cause was TDM interpreting explicit YAML timesteps as
+    already-shifted scheduler labels when converting to sigmas. Validation
+    uses raw timesteps plus shifted sigmas via `scheduler.set_timesteps(...)`.
+  - Patched `TDMMethod._timestep_to_sigma(...)` so static flow schedulers
+    convert explicit raw timesteps to shifted sigmas directly. Patched the TDM
+    SDE rollout path to use the same sigma lookup instead of
+    `student.add_noise(...)`, keeping SDE and ODE noising semantics aligned.
+    Patched `DmdDenoisingStage.forward(...)` to rebuild the scheduler table
+    from `pipeline_config.dmd_denoising_steps` before denoising, since that
+    stage replaces `batch.timesteps` with the DMD list.
+  - Added regression coverage in
+    `tests/local_tests/tdm/test_tdm_method_unit.py` with a shifted fake flow
+    scheduler. The test asserts raw explicit steps `[1000, 750, 500, 250]`
+    map to shifted sigmas `[1.0, 0.96, 0.888..., 0.727...]` instead of the old
+    unshifted `{1.0, 0.75, 0.5, 0.25}` interpretation.
+  - Modal L40S app `ap-93a5thhmV4NKH17U918XCC` reran
+    `pytest tests/local_tests/tdm/ -v -s` after the shifted-sigma fix. Result:
+    `20 passed in 17.36s`.
+  - Two-step real-training smoke app `ap-VL9pTwkpEWNVWPTSmpjSpt` ran on
+    H100:1 from base commit `7c6ddd8ee` with the local patch and a temporary
+    uncommitted diagnostic script. Command used the Wan TDM YAML, staged
+    `crush-smol_processed_t2v`, `max_train_steps=2`,
+    `method.generator_update_interval=1`, JSONL-only tracking,
+    checkpoint saves disabled, and validation disabled via
+    `callbacks.validation.every_steps=0`.
+  - The successful H100 smoke printed:
+    `SMOKE_TIMESTEPS [750.0, 750.0]`,
+    `SMOKE_SIGMAS [0.9599999785423279, 0.9599999785423279]`,
+    `SMOKE_TRAJECTORY_INDICES [1.0, 1.0]`,
+    `SMOKE_FLOW_SHIFT 8`, and `SMOKE_DMD_SAMPLE_TYPE ode`. The only warning
+    was the known non-fatal NCCL `destroy_process_group()` warning after
+    process exit.
+  - Downloaded the successful smoke tracker/config to
+    `/home/toolbox/FastVideo/outputs/issue-775-tdm/tdm_diag_reviewer_flow_ode_2step_7c6ddd8e_patch_v2/tracker/`.
+    Local summary: `8` JSONL rows, `2` generator rows, generator timesteps
+    `[750.0, 750.0]`, generator sigmas
+    `[0.9599999785423279, 0.9599999785423279]`, trajectory indices
+    `[1.0, 1.0]`, and tracker config retained `flow_shift=8`,
+    `dmd_sample_type=ode`, `student_sample_type=ode`.
+  - The temporary `scripts/diagnostics/issue775_tdm_smoke.py` file used only
+    for the Modal smoke was removed before committing and is not part of the
+    final branch diff.
+- Final local/static gate before commit:
+  - `git diff --check`: passed.
+  - `python -m py_compile` on all changed Python files: passed.
+  - Running changed-file `pre-commit run --files ...` directly in the issue
+    worktree applied yapf formatting and then hit the known mypy realpath
+    issue `issue-775-tdm is not a valid Python package name`.
+  - Recreated the final diff in valid-path clone
+    `/tmp/fastvideo_worktrees/issue_775_tdm_clone_final2`; changed-file
+    `pre-commit run --files ...` passed all hooks there, including mypy.
+  - Pre-commit GitHub refresh: `gh` identity is `macthecadillac`; issue #775
+    remains open and assigned to `macthecadillac`; comments are unchanged; no
+    open PRs matched targeted search `775 OR TDM`.
+- After validation, commit and push with GPG signing, then rerun Stage 3
+  review/adjudication because this is a later user-directed code change after
+  implementation had already begun. Do not launch the next 500-step DGX
+  apples-to-apples run until the fresh committed branch has cleared that loop.
 
 ## 2026-07-06 Resume Update
 
