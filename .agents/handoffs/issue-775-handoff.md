@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-09 true batch-4 DGX smoke completed
+Last updated: 2026-07-09 Wan-Syn replacement DGX job launched
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -277,6 +277,46 @@ handoff keeps only state needed to continue work.
   `wlsaidhi/crush-smol_processed_t2v` parquet dataset under the run-local
   HF cache; the pretrained model snapshot was not downloaded from
   `data/Wan-Syn_77x448x832_600k`.
+- User clarified that the next run should use
+  `data/Wan-Syn_77x448x832_600k` instead of the staged
+  `wlsaidhi/crush-smol_processed_t2v` dataset used by the earlier DGX/Modal
+  diagnostics, and said to restart the job if necessary. DGX inspection showed
+  no active issue-775 containers and no existing Wan-Syn dataset copy under
+  the checked common paths.
+- Launched replacement detached DGX Spark Docker job:
+  - Container: `issue775_tdm_wansyn_bsz4_smoke_20260709100811`, id
+    `dd33083db3388aa1ed6bd7297617f0729c3b000819bd5950544152c17bf9e0f0`.
+  - Run root:
+    `/home/mac/fastvideo-runs/issue-775/tdm_wansyn_bsz4_smoke_486e4ff_20260709100811`.
+  - Log:
+    `/home/mac/fastvideo-runs/issue-775/tdm_wansyn_bsz4_smoke_486e4ff_20260709100811/logs/wansyn_batch_size_smoke.log`.
+  - Shared dataset target:
+    `/home/mac/fastvideo-runs/issue-775/datasets/Wan-Syn_77x448x832_600k`.
+  - The run symlinks that shared dataset into
+    `/workspace/run/FastVideo/data/Wan-Syn_77x448x832_600k`, then launches
+    training with explicit `--training.data.data_path
+    data/Wan-Syn_77x448x832_600k`.
+  - The process tree was verified with `docker top` as user `mac`; the
+    container is detached, uses `--user 1006:1006`, and uses
+    `fastvideo-dev-nonroot:issue775`.
+  - First observed status:
+    `docker inspect` reported `status=running running=true exit=0 oom=false`.
+    The job had cloned commit
+    `486e4ffd71d2436f74436b5a685a442b54d0fa7f`, entered dataset staging, and
+    started `snapshot_download` for
+    `FastVideo/Wan-Syn_77x448x832_600k`; the dataset directory had reached
+    about `2.1G`.
+  - Follow-up status at about `2026-07-09T10:12Z`: still running with
+    `oom=false`, still in dataset staging. The log showed
+    `Fetching ... files` through file `114`, and the shared dataset directory
+    had reached about `17G`.
+  - Planned command after dataset staging: true
+    `training.data.train_batch_size=4`,
+    `training.loop.gradient_accumulation_steps=1`,
+    `training.loop.max_train_steps=2`, JSONL tracker only, no checkpoint
+    saves, validation disabled. If true batch 4 fails with a CUDA OOM
+    signature, the script retries effective batch 4 with
+    `train_batch_size=1` and `gradient_accumulation_steps=4`.
 - DGX Spark true-batch-size smoke completed:
   - Detached non-root Docker container:
     `issue775_tdm_bsz4_smoke_20260709074338`, id
