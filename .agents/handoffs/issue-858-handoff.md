@@ -61,6 +61,7 @@
 - 2026-07-09T07:07Z: Re-checked open PR inventory with `gh pr list --state open --limit 200`; no open PR closes, references, or directly fixes #858.
 - 2026-07-09T07:18Z: Inspected Modal launcher and current dataloader/pipeline code for a synthetic-data validation command. `launch_l40s_job.py` can be launched from the `interleavethinker` worktree while targeting this issue branch's commit. The parquet map-style loader decodes tensor bytes as float32 and constructs `text_attention_mask` from the padded text embedding. With `--simulate_generator_forward`, `DistillationPipeline._get_next_batch` creates zero latents from `num_latent_t`, `num_height`, and `num_width`, so validation can use a tiny parquet dataset while still exercising DMD model forward/backward and VSA metadata for the reporter-like shape.
 - 2026-07-09T07:55Z: Completed Stage 2 no-code validation on Modal H100:2. Current code at issue branch commit `467b09fe89aa6af2fa64baca31d39fb34c10f069` completes a reporter-shape DMD+VSA smoke and records finite nonzero generator grad norms. No repository source files were changed.
+- 2026-07-09T07:57Z: Created signed handoff-only commit `021709971` (`[misc]: record issue 858 validation`) and pushed it to `origin/issue/858-fastwan-vsa-grad-check`.
 
 ## Current Hypothesis
 - The exact reported crash is stale against current `origin/main`: the `for param in self.transformer.parameters(): assert param.grad is not None and param.grad.abs().sum() > 0` check existed at reporter commit `404314d0` (`fastvideo/training/distillation_pipeline.py:1001-1003`) but is absent on the issue branch and on `upstream/main`.
@@ -117,6 +118,5 @@ Conclusion:
 - Mandatory future PR gate remains: `pre-commit run --all-files` before any draft PR creation; no draft PR should be opened until explicit Stage 4 direction.
 
 ## Next Steps
-- Commit and push this handoff-only update.
 - Report no-code resolution recommendation to the user.
 - Do not open a PR or draft PR unless the user explicitly asks for Stage 4; a no-code GitHub issue comment could be prepared if requested.
