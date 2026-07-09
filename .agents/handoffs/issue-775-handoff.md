@@ -215,7 +215,22 @@ handoff keeps only state needed to continue work.
     from the same base commit with the local patch applied. Result: passed
     `yapf`, `ruff`, `codespell`, `mypy`, filename-space, and suggestion
     hooks; PyMarkdown/actionlint had no files to check.
-- Commit/push pending after final GitHub issue/PR refresh.
+  - Final GitHub refresh before commit/push: issue #775 remained open and
+    assigned to `macthecadillac`; issue comments were unchanged; targeted open
+    PR searches for `775 OR TDM` and head `issue/775-tdm` returned `[]`; no
+    PR state was changed.
+- Signed code commit and push:
+  - Commit `c3613d4dc5d5b6298c2822b1cb6744cb40efae0f`
+    `[fix]: avoid TDM warped schedule double shift`.
+  - `git log -1 --show-signature` verified a good signature from
+    `Mac Lee <macthecadillac@gmail.com>` using subkey
+    `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+  - Pushed `issue/775-tdm` to `origin` (`macthecadillac/FastVideo`);
+    push succeeded with only the known non-fatal SSH `known_hosts`
+    cross-device-link warnings.
+- Because this adjudicator accepted findings and changed code, the parent
+  Stage 3 loop should continue with a fresh `review-code` pass against the
+  updated committed branch. No PR was opened, and the handoff remains active.
 
 ## 2026-07-06 Resume Update
 
