@@ -9,7 +9,7 @@
 - Author: dingangui
 - Created: 2025-10-30T03:58:59Z
 - Updated: 2026-06-28T05:52:56Z
-- Current stage: Stage 2 - Validate Current DMD+VSA Behavior
+- Current stage: Stage 2 - Completed No-Code Current-Behavior Validation
 - Implementation begun: no
 
 ## Workspace
@@ -60,6 +60,7 @@
 - 2026-07-09T07:06Z: Re-checked issue #858 with `gh issue view`; issue body/comments/state are unchanged from Stage 1.
 - 2026-07-09T07:07Z: Re-checked open PR inventory with `gh pr list --state open --limit 200`; no open PR closes, references, or directly fixes #858.
 - 2026-07-09T07:18Z: Inspected Modal launcher and current dataloader/pipeline code for a synthetic-data validation command. `launch_l40s_job.py` can be launched from the `interleavethinker` worktree while targeting this issue branch's commit. The parquet map-style loader decodes tensor bytes as float32 and constructs `text_attention_mask` from the padded text embedding. With `--simulate_generator_forward`, `DistillationPipeline._get_next_batch` creates zero latents from `num_latent_t`, `num_height`, and `num_width`, so validation can use a tiny parquet dataset while still exercising DMD model forward/backward and VSA metadata for the reporter-like shape.
+- 2026-07-09T07:55Z: Completed Stage 2 no-code validation on Modal H100:2. Current code at issue branch commit `467b09fe89aa6af2fa64baca31d39fb34c10f069` completes a reporter-shape DMD+VSA smoke and records finite nonzero generator grad norms. No repository source files were changed.
 
 ## Current Hypothesis
 - The exact reported crash is stale against current `origin/main`: the `for param in self.transformer.parameters(): assert param.grad is not None and param.grad.abs().sum() > 0` check existed at reporter commit `404314d0` (`fastvideo/training/distillation_pipeline.py:1001-1003`) but is absent on the issue branch and on `upstream/main`.
@@ -90,21 +91,32 @@
 Recommended plan: Option A first. Validate current code against the reporter-like shape on Modal. If it passes, do not patch runtime code; report that #858 is already resolved by post-404314d0 fixes and prepare a concise GitHub response. If it fails, implement the smallest fix dictated by that new failure. Option B can be added after validation if maintainers want a low-cost regression for the exact shape math.
 
 ## Validation Status
-- Stage 2 validation is being prepared; no source code changes have been made.
 - No local tests were run; FastVideo rules forbid local test execution.
-- Planned Modal validation:
-  - Launch from `/tmp/fastvideo-worktrees/interleavethinker-modal` through `fastvideo/tests/modal/launch_l40s_job.py`.
-  - Target repo/commit: `git@github.com:macthecadillac/FastVideo.git` at issue branch commit `c43f60f36e161a3eba1ebfc94c354638628f4135`.
-  - GPU target: `H100:2`, because the reporter used large 77x448x832 DMD+VSA shape and L40S may be too tight.
-  - Environment: `FASTVIDEO_ATTENTION_BACKEND=VIDEO_SPARSE_ATTN`, `WANDB_MODE=offline`, `TOKENIZERS_PARALLELISM=false`.
-  - Synthetic dataset: local-to-Modal temporary parquet under `/tmp/issue858_synthetic_t2v` with float32 `vae_latent` and `text_embedding` columns matching `pyarrow_schema_t2v`; use enough rows for the distributed sampler with two GPUs.
-  - Training command: short `torchrun --nproc_per_node 2 fastvideo/training/wan_distillation_pipeline.py` with Wan2.1 T2V 1.3B paths, `--num_latent_t 20`, `--num_height 448`, `--num_width 832`, `--num_frames 77`, `--VSA_sparsity 0.8`, `--generator_update_interval 1`, `--dmd_denoising_steps 1000`, `--simulate_generator_forward`, and checkpoint/validation disabled.
-- If validation passes, treat the issue as already resolved by post-report distillation/VSA changes and prepare a no-code status/closure note.
-- If validation fails, use the observed current failure as the Stage 2 implementation target, then run focused Modal validation and the required Stage 3 review/adjudication loop.
-- Mandatory future PR gate: `pre-commit run --all-files` before any draft PR creation; no draft PR should be opened until explicit Stage 4 direction.
+- No source code changes were made. Only the temporary validation harness `/tmp/issue858_modal_validation.py` was edited between Modal attempts.
+- Modal launcher used from `/tmp/fastvideo-worktrees/interleavethinker-modal` via `fastvideo/tests/modal/launch_l40s_job.py`.
+- Target repo/commit for validation: `https://github.com/macthecadillac/FastVideo.git` at `467b09fe89aa6af2fa64baca31d39fb34c10f069`.
+- GPU/env: `H100:2`, `FASTVIDEO_ATTENTION_BACKEND=VIDEO_SPARSE_ATTN`, `WANDB_MODE=offline`, `TOKENIZERS_PARALLELISM=false`, `--build-kernel`.
+- Reporter-like training shape/flags: Wan2.1 T2V 1.3B DMD distillation, `--num_latent_t 20`, `--num_height 448`, `--num_width 832`, `--num_frames 77`, `--VSA_sparsity 0.8`, `--generator_update_interval 1`, `--dmd_denoising_steps 1000`, `--simulate_generator_forward`, `--max_grad_norm 1.0`, `--mixed_precision bf16`, `--enable_gradient_checkpointing_type full`, 2 GPUs.
+
+Validation attempts:
+- `ap-l2UbvDkIpQ1Q1KpNM78bB3`: failed before training with a command quoting `SyntaxError`; not a model/VSA result.
+- `ap-AgrGaVbNpuL1YuWyyi23v3`: reached training but failed with `ValueError: text_dict cannot be None for distillation pipeline` because the smoke omitted unconditional negative-prompt embeddings. Current code normally sets these during validation prompt encoding; the harness was adjusted to inject synthetic unconditional embeddings directly after pipeline init.
+- `ap-uMXksv8Wb9jaACYouKcQLy`: completed a one-step DMD+VSA smoke after injecting unconditional embeddings. It selected `VIDEO_SPARSE_ATTN` for the main transformer and completed training/checkpointing. Because the initial synthetic tensors were zeros and the log did not expose generator grad norm before later fake-score clipping overwrote `training_batch.grad_norm`, this was treated as a weak pass and the harness was strengthened.
+- `ap-fpRHNTeN9C52KJ7a3mQMN1`: final strict validation passed. Harness used deterministic random synthetic `vae_latent` and `text_embedding`, injected unconditional embeddings, and wrapped `_clip_model_grad_norm_` to assert the generator grad norm was finite and greater than zero before optimizer step. Key output:
+  - `Issue 858 generator grad norm check 1: 2.513908624649048`
+  - Step 1: `generator_loss=0.6467`, `fake_score_loss=1.8015`, `total_loss=2.4482`
+  - `Issue 858 generator grad norm check 2: 2.6208765506744385`
+  - Step 2: `generator_loss=0.5089`, `fake_score_loss=0.8878`, `total_loss=1.3967`
+  - Worker completed: `Issue 858 DMD VSA validation worker completed`
+  - Modal app completed successfully.
+
+Conclusion:
+- Current code does not reproduce the issue #858 assertion or a zero-generator-gradient failure on the reporter-like 77-frame DMD+VSA shape.
+- The old per-parameter nonzero-gradient assertion was already removed by PR #933, and later VSA kernel/metadata fixes plausibly addressed the collaborator's kernel-shape concern.
+- Stage 2 should end as a no-code resolution unless maintainers want an additional low-cost metadata regression test. Because no repository source code was implemented, the Stage 3 review/adjudication loop for committed code is not applicable.
+- Mandatory future PR gate remains: `pre-commit run --all-files` before any draft PR creation; no draft PR should be opened until explicit Stage 4 direction.
 
 ## Next Steps
-- Run the planned Modal validation.
-- Record Modal command/output summary and result in this handoff.
-- If validation passes, commit/push the updated handoff and report a no-code resolution recommendation.
-- If validation fails, implement the smallest current-code fix dictated by the failure, commit/push, validate, then run the Stage 3 reviewer/adjudicator loop.
+- Commit and push this handoff-only update.
+- Report no-code resolution recommendation to the user.
+- Do not open a PR or draft PR unless the user explicitly asks for Stage 4; a no-code GitHub issue comment could be prepared if requested.
