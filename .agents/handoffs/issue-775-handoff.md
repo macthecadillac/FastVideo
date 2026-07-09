@@ -710,6 +710,33 @@ handoff keeps only state needed to continue work.
       `fake_score_loss=0.001082007889635861`,
       `tdm/generator/timestep=500.0`, `tdm/generator/sigma=0.5`, and
       `step_time_sec=106.68669968913309`.
+    - Completion status checked on 2026-07-09: container
+      `issue775_tdm_schedule_500_49dda70_final_v1_nonroot` reports
+      `status=exited running=false exit=0 oom=false`, started
+      `2026-07-08T06:35:06.698493347Z`, finished
+      `2026-07-08T22:24:09.613773078Z`.
+    - Completed-run tracker summary:
+      `2000` JSONL rows, `500` unique steps, steps `1..500`, `500` loss rows,
+      `0` nonfinite scalar metrics, and generator timesteps `[500.0, 750.0]`.
+      Last loss row at step `500`: `total_loss=0.3945949673652649`,
+      `generator_loss=0.39244306087493896`,
+      `fake_score_loss=0.002151909749954939`,
+      `tdm/generator/timestep=750.0`, and `tdm/generator/sigma=0.75`.
+    - Checkpoints present:
+      `checkpoint-100`, `checkpoint-200`, `checkpoint-300`, `checkpoint-400`,
+      and `checkpoint-500`.
+    - Final visual outputs were generated successfully:
+      student checkpoint-500 4-step videos at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/validation_step500/student_tdm_4step/validation_step_500_inference_steps_4_video_{0..3}.mp4`
+      with file sizes approximately `246K`, `1.1M`, `139K`, and `1.3M`;
+      teacher/base Wan 50-step videos at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/validation_step500/teacher_wan_50step/teacher_wan_50step_prompt{0..3}.mp4`
+      with file sizes approximately `324K`, `852K`, `247K`, and `1.1M`.
+      Prompt mapping is saved at
+      `/home/mac/fastvideo-runs/issue-775/tdm_schedule_500_49dda70_final_v1/validation_step500/teacher_wan_50step/prompts.json`.
+    - `ffprobe` sanity check passed for all eight MP4s: each reports
+      `832x448`, `77` frames, `16` fps, and `4.812500s` duration.
+      The run log ended with `=== done 2026-07-08T22:24:09+00:00 ===`.
 
 - Resumed at `2026-07-06 04:04:09 UTC` from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
