@@ -9,7 +9,7 @@
 - Author: dingangui
 - Created: 2025-10-30T03:58:59Z
 - Updated: 2026-06-28T05:52:56Z
-- Current stage: Stage 1 - Deep Dive And Plan
+- Current stage: Stage 2 - Validate Current DMD+VSA Behavior
 - Implementation begun: no
 
 ## Workspace
@@ -55,6 +55,11 @@
 - 2026-07-09T06:18Z: GitHub PR inventory and targeted duplicate searches completed. No implementation changes made.
 - 2026-07-09T06:30Z: Read `fastvideo/AGENTS.md`, `fastvideo/training/AGENTS.md`, `fastvideo/attention/AGENTS.md`, and `fastvideo/models/AGENTS.md`. Searched `.agents/lessons` for VSA/gradient/distillation terms; no relevant lesson matched.
 - 2026-07-09T06:41Z: Inspected current legacy distillation train step, VSA metadata/kernel routing, Wan VSA blocks, training tests, and history around the reported assertion. No implementation changes made.
+- 2026-07-09T07:04Z: User approved the recommended no-code-first Stage 2 validation path: run a Modal DMD+VSA smoke at the reporter-like 77-frame shape and only implement code if current behavior still fails.
+- 2026-07-09T07:05Z: Re-verified GitHub identity with `gh api user --jq .login`: `macthecadillac`.
+- 2026-07-09T07:06Z: Re-checked issue #858 with `gh issue view`; issue body/comments/state are unchanged from Stage 1.
+- 2026-07-09T07:07Z: Re-checked open PR inventory with `gh pr list --state open --limit 200`; no open PR closes, references, or directly fixes #858.
+- 2026-07-09T07:18Z: Inspected Modal launcher and current dataloader/pipeline code for a synthetic-data validation command. `launch_l40s_job.py` can be launched from the `interleavethinker` worktree while targeting this issue branch's commit. The parquet map-style loader decodes tensor bytes as float32 and constructs `text_attention_mask` from the padded text embedding. With `--simulate_generator_forward`, `DistillationPipeline._get_next_batch` creates zero latents from `num_latent_t`, `num_height`, and `num_width`, so validation can use a tiny parquet dataset while still exercising DMD model forward/backward and VSA metadata for the reporter-like shape.
 
 ## Current Hypothesis
 - The exact reported crash is stale against current `origin/main`: the `for param in self.transformer.parameters(): assert param.grad is not None and param.grad.abs().sum() > 0` check existed at reporter commit `404314d0` (`fastvideo/training/distillation_pipeline.py:1001-1003`) but is absent on the issue branch and on `upstream/main`.
@@ -85,22 +90,21 @@
 Recommended plan: Option A first. Validate current code against the reporter-like shape on Modal. If it passes, do not patch runtime code; report that #858 is already resolved by post-404314d0 fixes and prepare a concise GitHub response. If it fails, implement the smallest fix dictated by that new failure. Option B can be added after validation if maintainers want a low-cost regression for the exact shape math.
 
 ## Validation Status
-- No validation run yet. Per Stage 1 rules, no Modal or tests are run before the user approves implementation.
+- Stage 2 validation is being prepared; no source code changes have been made.
 - No local tests were run; FastVideo rules forbid local test execution.
-- Suggested Stage 2 validation if user approves Option A:
-  - Re-check issue/comments/open PRs with `gh`.
-  - Use `fastvideo/tests/modal/launch_l40s_job.py` from branch/worktree `interleavethinker`.
-  - Prefer H100 or B200-class GPU if L40S memory is insufficient for reporter-like `num_latent_t=20`, 448x832, DMD+VSA.
-  - Command should set `FASTVIDEO_ATTENTION_BACKEND=VIDEO_SPARSE_ATTN` and run a short DMD distillation invocation or a targeted test script using current `wan_distillation_pipeline.py`.
-  - If code changes later happen, run focused Modal validation and the Stage 3 `review-code` / adjudicator loop before any draft PR message.
+- Planned Modal validation:
+  - Launch from `/tmp/fastvideo-worktrees/interleavethinker-modal` through `fastvideo/tests/modal/launch_l40s_job.py`.
+  - Target repo/commit: `git@github.com:macthecadillac/FastVideo.git` at issue branch commit `c43f60f36e161a3eba1ebfc94c354638628f4135`.
+  - GPU target: `H100:2`, because the reporter used large 77x448x832 DMD+VSA shape and L40S may be too tight.
+  - Environment: `FASTVIDEO_ATTENTION_BACKEND=VIDEO_SPARSE_ATTN`, `WANDB_MODE=offline`, `TOKENIZERS_PARALLELISM=false`.
+  - Synthetic dataset: local-to-Modal temporary parquet under `/tmp/issue858_synthetic_t2v` with float32 `vae_latent` and `text_embedding` columns matching `pyarrow_schema_t2v`; use enough rows for the distributed sampler with two GPUs.
+  - Training command: short `torchrun --nproc_per_node 2 fastvideo/training/wan_distillation_pipeline.py` with Wan2.1 T2V 1.3B paths, `--num_latent_t 20`, `--num_height 448`, `--num_width 832`, `--num_frames 77`, `--VSA_sparsity 0.8`, `--generator_update_interval 1`, `--dmd_denoising_steps 1000`, `--simulate_generator_forward`, and checkpoint/validation disabled.
+- If validation passes, treat the issue as already resolved by post-report distillation/VSA changes and prepare a no-code status/closure note.
+- If validation fails, use the observed current failure as the Stage 2 implementation target, then run focused Modal validation and the required Stage 3 review/adjudication loop.
 - Mandatory future PR gate: `pre-commit run --all-files` before any draft PR creation; no draft PR should be opened until explicit Stage 4 direction.
 
 ## Next Steps
-- Commit and push this handoff-only Stage 1 commit.
-- Ask the user to choose:
-  - validate/no-code-first path (recommended),
-  - add lightweight metadata regression,
-  - add/adjust DMD+VSA training smoke,
-  - documentation-only clarification,
-  - or another concrete implementation direction.
-- Do not implement code, comment on GitHub, assign/label, run Modal, or open a PR until the user gives Stage 2 guidance.
+- Run the planned Modal validation.
+- Record Modal command/output summary and result in this handoff.
+- If validation passes, commit/push the updated handoff and report a no-code resolution recommendation.
+- If validation fails, implement the smallest current-code fix dictated by the failure, commit/push, validate, then run the Stage 3 reviewer/adjudicator loop.
