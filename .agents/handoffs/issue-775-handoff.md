@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-09 reviewer-guided TDM objective/schedule patch after Modal validation
+Last updated: 2026-07-09 true batch-4 DGX smoke completed
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -229,8 +229,102 @@ handoff keeps only state needed to continue work.
     push succeeded with only the known non-fatal SSH `known_hosts`
     cross-device-link warnings.
 - Because this adjudicator accepted findings and changed code, the parent
-  Stage 3 loop should continue with a fresh `review-code` pass against the
-  updated committed branch. No PR was opened, and the handoff remains active.
+  Stage 3 loop continued with a fresh `review-code` pass against the updated
+  committed branch. No PR was opened, and the handoff remains active.
+- Parent verified local worktree clean and synced at
+  `869bd908057fa0fbebed4e0b2b25aa269c64b345`; latest signature verified good
+  from `Mac Lee <macthecadillac@gmail.com>`.
+- Spawned fresh review-code sub-agent
+  `019f45b8-67b3-7b81-b22f-de0c3c867b0d` (`Banach`) to review updated branch
+  head `869bd908057fa0fbebed4e0b2b25aa269c64b345`.
+- Reviewer `Banach` completed with two findings:
+  1. High: TDM uses inconsistent timestep-to-sigma mappings during training.
+     `_timestep_to_sigma(...)` maps raw YAML steps such as `750` through flow
+     shift to sigma about `0.96`, but `_student_trajectory()` passes raw
+     timestep `750` directly into `student.predict_x0()`, whose
+     `pred_noise_to_pred_video(...)` lookup can resolve sigma around `0.75`
+     from the role scheduler's shifted timestep table. Recommendation: use one
+     authoritative schedule; either convert configured raw steps to scheduler
+     timestep labels before all `predict_x0()` calls, or make x0
+     conversion/noising consume the same sigmas as `_timestep_to_sigma()`.
+     Add shifted Wan scheduler regression coverage.
+  2. Medium: shipped TDM example enables validation every 50 steps without
+     `offload_training_state` or `unload_pipeline_after_validation`, even
+     though TDM keeps student/teacher/critic resident and validation loads an
+     inference pipeline. Recommendation: enable both offload settings in the
+     TDM validation block, or disable validation by default and document the
+     separate command.
+- Per Stage 3, these second-review findings were passed verbatim to another
+  separate adjudicator/fixer agent for independent decision and any accepted
+  fixes.
+- User then raised a new possible quality culprit: effective batch size may
+  have been too small and asked to try `bz = 4` or `8`, with gradient
+  accumulation acceptable if true larger batch OOMs. Current config and prior
+  DGX runs used `training.data.train_batch_size=1` and
+  `training.loop.gradient_accumulation_steps=1`, so this is an experiment
+  variable not previously covered. The next DGX action is a short detached
+  Docker smoke at true `train_batch_size=4`; if it fails with a CUDA OOM
+  signature, retry equivalent effective batch 4 with
+  `train_batch_size=1` and `gradient_accumulation_steps=4`. Do not run a long
+  500-step batch-size comparison until this smoke confirms memory/numerics and
+  the still-open Stage 3 scheduler-consistency review finding is resolved or
+  explicitly accepted as residual risk.
+- Clarified data/model path: `data/Wan-Syn_77x448x832_600k` is the configured
+  training dataset path. The Wan model weights are loaded from the
+  `models.*.init_from` entries, currently
+  `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`, and cached separately under the HF model
+  cache. Earlier DGX comparison runs overrode the dataset path to the staged
+  `wlsaidhi/crush-smol_processed_t2v` parquet dataset under the run-local
+  HF cache; the pretrained model snapshot was not downloaded from
+  `data/Wan-Syn_77x448x832_600k`.
+- DGX Spark true-batch-size smoke completed:
+  - Detached non-root Docker container:
+    `issue775_tdm_bsz4_smoke_20260709074338`, id
+    `f7e38c1d1db9c1e0b19f8299e2fc472275829b3d0d4b98eb2b4fec54d6d72057`.
+    `docker inspect` after completion reported
+    `status=exited running=false exit=0 oom=false`, finished
+    `2026-07-09T08:09:31Z`.
+  - Run root:
+    `/home/mac/fastvideo-runs/issue-775/tdm_bsz4_smoke_869bd90_20260709074338`.
+    Main log:
+    `/home/mac/fastvideo-runs/issue-775/tdm_bsz4_smoke_869bd90_20260709074338/logs/batch_size_smoke.log`.
+    Metrics:
+    `/home/mac/fastvideo-runs/issue-775/tdm_bsz4_smoke_869bd90_20260709074338/output_true_bsz4/tracker/metrics.jsonl`.
+  - The process tree was verified with `docker top` as user `mac` before and
+    during training. The run used detached Docker with `--user 1006:1006` and
+    the DGX-local `fastvideo-dev-nonroot:issue775` derivative of the required
+    FastVideo Docker image.
+  - The command checked out committed branch head
+    `869bd908057fa0fbebed4e0b2b25aa269c64b345`, set
+    `training.data.train_batch_size=4`,
+    `training.loop.gradient_accumulation_steps=1`,
+    `training.loop.max_train_steps=2`, `method.generator_update_interval=1`,
+    JSONL-only tracking, no checkpoint saves, and validation disabled.
+  - The dataset was the same staged `wlsaidhi/crush-smol_processed_t2v`
+    parquet dataset used by the previous DGX comparison run. The log confirms
+    the full Wan model snapshot was downloaded from
+    `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` into the run-local HF model cache,
+    not from `data/Wan-Syn_77x448x832_600k`; the HF cache reached about `28G`.
+  - True batch 4 fit memory and did not trigger the scripted gradient
+    accumulation fallback. Metrics summary: `8` JSONL rows, steps `1..2`,
+    `2` loss rows, `0` nonfinite scalar metrics.
+  - Step 1 took `518.659s` with
+    `total_loss=1.4091826677`, `generator_loss=0.9760555029`,
+    `fake_score_loss=0.4331271946`,
+    `grad_norm/student=0.5851445198`, and
+    `grad_norm/critic=0.3069764972`.
+  - Step 2 took `441.647s` with
+    `total_loss=1.2040213346`, `generator_loss=0.9869136810`,
+    `fake_score_loss=0.2171076387`,
+    `grad_norm/student=0.4463202953`, and
+    `grad_norm/critic=0.1409958750`.
+  - Practical implication: a 500 optimizer-step true-batch-4 run would be
+    roughly `61` hours from the step-2 steady-state time, or `67` hours from
+    the two-step mean, before validation/visual generation. A sample-count
+    matched comparison to the prior 500-step batch-1 run would be closer to
+    `125` optimizer steps at true batch 4, but that is not optimizer-update
+    matched. Do not launch a long batch-size run without explicitly choosing
+    which comparison basis to use.
 
 ## 2026-07-06 Resume Update
 
