@@ -322,13 +322,14 @@ class TDMMethod(DMD2Method):
         if not isinstance(raw, list) or not raw:
             raise ValueError("method.tdm_denoising_steps must be set for TDM")
 
-        steps = torch.tensor(
+        raw_steps = torch.tensor(
             [int(s) for s in raw],
             dtype=torch.long,
             device=device,
         )
-        if steps.numel() < 2:
+        if raw_steps.numel() < 2:
             raise ValueError("method.tdm_denoising_steps must contain at least two steps for TDM")
+        steps = raw_steps.to(dtype=torch.float32)
 
         warp = self.method_config.get("warp_denoising_step", None)
         if warp is None:
@@ -338,7 +339,10 @@ class TDMMethod(DMD2Method):
                 self.student.noise_scheduler.timesteps.to("cpu"),
                 torch.tensor([0], dtype=torch.float32),
             )).to(device)
-            steps = timesteps[int(self.student.num_train_timesteps) - steps].long()
+            step_indices = int(self.student.num_train_timesteps) - raw_steps
+            if bool(torch.any((step_indices < 0) | (step_indices >= len(timesteps))).item()):
+                raise ValueError("method.tdm_denoising_steps contains values outside the scheduler training range")
+            steps = timesteps[step_indices]
 
         sigmas = self._timestep_to_sigma(steps)
         scheduler_sigmas = self.student.noise_scheduler.sigmas.to(device=device, dtype=torch.float32)
@@ -374,6 +378,18 @@ class TDMMethod(DMD2Method):
             "num_train_timesteps",
             getattr(scheduler, "num_train_timesteps", None),
         )
+        sigmas = scheduler.sigmas.to(device=timestep.device, dtype=torch.float32)
+        timesteps = scheduler.timesteps.to(device=timestep.device, dtype=torch.float32)
+        exact_matches = torch.isclose(
+            timesteps.unsqueeze(0),
+            t.unsqueeze(1),
+            rtol=0.0,
+            atol=1e-5,
+        )
+        if bool(exact_matches.any(dim=1).all().item()):
+            idx = torch.argmax(exact_matches.to(torch.long), dim=1)
+            return sigmas[idx]
+
         has_static_flow_schedule = (shift is not None and num_train_timesteps is not None
                                     and not bool(getattr(config, "use_dynamic_shifting", False))
                                     and not getattr(config, "shift_terminal", None)
@@ -387,8 +403,6 @@ class TDMMethod(DMD2Method):
             sigma = t / float(num_train_timesteps)
             return flow_shift * sigma / (1.0 + (flow_shift - 1.0) * sigma)
 
-        sigmas = scheduler.sigmas.to(device=timestep.device, dtype=torch.float32)
-        timesteps = scheduler.timesteps.to(device=timestep.device, dtype=torch.float32)
         idx = torch.argmin(
             (timesteps.unsqueeze(0) - t.unsqueeze(1)).abs(),
             dim=1,

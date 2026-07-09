@@ -76,6 +76,29 @@ class _ShiftedFlowScheduler(_FakeFlowScheduler):
         )
 
 
+class _DenseShiftedFlowScheduler(_ShiftedFlowScheduler):
+
+    def __init__(self) -> None:
+        raw_timesteps = torch.arange(
+            1000,
+            0,
+            -1,
+            dtype=torch.float32,
+        )
+        raw_sigmas = raw_timesteps / 1000.0
+        shifted_sigmas = self.shift * raw_sigmas / (1.0 + (self.shift - 1.0) * raw_sigmas)
+        self.timesteps = shifted_sigmas * 1000.0
+        self.sigmas = shifted_sigmas
+        self.config = SimpleNamespace(
+            num_train_timesteps=1000,
+            use_dynamic_shifting=False,
+            shift_terminal=None,
+            use_karras_sigmas=False,
+            use_exponential_sigmas=False,
+            use_beta_sigmas=False,
+        )
+
+
 class _TinyRoleModel(ModelBase):
 
     def __init__(
@@ -288,6 +311,20 @@ def test_tdm_sigma_lookup_treats_explicit_steps_as_raw_wan_timesteps() -> None:
         8.0 * 0.25 / (1.0 + 7.0 * 0.25),
     ])
     assert_close(sigmas, expected)
+
+
+def test_tdm_warped_denoising_steps_use_scheduler_sigmas_without_double_shift() -> None:
+    method, student, _ = _build_method(method_overrides={"warp_denoising_step": True})
+    student.noise_scheduler = _DenseShiftedFlowScheduler()
+
+    steps = method._get_denoising_step_list(torch.device("cpu"))
+    sigmas = method._timestep_to_sigma(steps)
+    step_indices = torch.tensor([0, 250, 500, 750])
+    expected_steps = student.noise_scheduler.timesteps[step_indices]
+    expected_sigmas = student.noise_scheduler.sigmas[step_indices]
+
+    assert_close(steps, expected_steps)
+    assert_close(sigmas, expected_sigmas)
 
 
 @pytest.mark.parametrize(

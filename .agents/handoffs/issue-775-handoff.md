@@ -146,6 +146,76 @@ handoff keeps only state needed to continue work.
   review/adjudication because this is a later user-directed code change after
   implementation had already begun. Do not launch the next 500-step DGX
   apples-to-apples run until the fresh committed branch has cleared that loop.
+- Signed code commit and push:
+  - Commit `ce68de9f2a08126b649db1c99bb212ef5bea39fa`
+    `[fix]: align TDM trajectory schedule and objective`.
+  - `git log -1 --show-signature` verified a good signature from
+    `Mac Lee <macthecadillac@gmail.com>` using subkey
+    `9970C3F2BC145193A5C12AAD4C1D75FF3B58866D`.
+  - Pushed `issue/775-tdm` to `origin` (`macthecadillac/FastVideo`);
+    push succeeded with only the known non-fatal SSH `known_hosts`
+    cross-device-link warnings.
+- Fresh Stage 3 review loop after this later user-directed code change:
+  - Spawned review-code sub-agent `019f459c-4300-7211-b2a2-d6bd5bee4a1b`
+    (`Popper`) to review committed branch `macthecadillac/FastVideo`
+    `issue/775-tdm` at `ce68de9f2a08126b649db1c99bb212ef5bea39fa`
+    for issue #775.
+  - Reviewer `Popper` completed with three findings:
+    1. Medium: `warp_denoising_step=True` double-applies the flow-shift
+       schedule in TDM because warped steps are already scheduler timesteps
+       and then `_timestep_to_sigma(...)` applies static flow shift again.
+       Recommendation: reject `warp_denoising_step=True` for TDM or derive
+       warped sigmas directly from scheduler sigmas; add shifted-scheduler
+       regression coverage.
+    2. Medium: production-path coverage is still thin for a new training
+       method. Recommendation: add lightweight `fastvideo/tests/train/...`
+       coverage for config/build/validation propagation.
+    3. Low: the branch still commits the temporary handoff. Recommendation:
+       remove before PR creation.
+  - Per Stage 3, these findings were passed verbatim to a separate
+    adjudicator/fixer agent for independent decision and any accepted fixes.
+- Independent adjudicator/fixer pass started in the same worktree at
+  `/tmp/fastvideo-worktrees/issue-775-tdm`, with `gh` verified as
+  `macthecadillac`. Issue #775 remains open with only the maintainer-interest
+  and stale-bot comments; targeted open PR searches for `775` and
+  `issue/775-tdm` returned `[]`.
+- Adjudicator decisions:
+  - Accepted reviewer finding 1. The committed `warp_denoising_step=True`
+    path converted raw TDM steps through `student.noise_scheduler.timesteps`,
+    then `_timestep_to_sigma(...)` treated those shifted labels as raw Wan
+    timesteps for static flow-shift schedulers. This would apply flow shift a
+    second time. Patched TDM to preserve warped scheduler timestep labels as
+    floats and to resolve exact scheduler-table timestep labels directly from
+    `scheduler.sigmas` before using the raw-timestep static flow formula.
+    Added shifted-scheduler regression coverage for warped steps.
+  - Accepted reviewer finding 2 as a coverage gap. Added a package-level
+    `fastvideo/tests/train/...` regression that loads the shipped Wan TDM YAML,
+    builds `TDMMethod` through `build_from_config(...)` using lightweight Wan
+    stubs, verifies inherited scheduler shift and raw-step sigma mapping, and
+    exercises validation `sampling_timesteps` propagation into a fake
+    `WanDMDPipeline`/DMD inference args.
+  - Rejected reviewer finding 3 for the current stage. The handoff is still
+    required because no PR exists and Stage 4 has not been explicitly
+    requested. It should be removed immediately before PR creation, not during
+    this adjudicator/fixer pass.
+- Validation after this patch:
+  - First Modal L40S targeted pytest app `ap-347yxveZpbUrHjSreDTAut`
+    correctly applied the local patch and ran the intended command, but failed
+    one new test because the fake validation dataset bypassed
+    `ValidationDataset.__iter__` and did not include the real `prompt` alias.
+    This was a test-fixture bug, not a product-code failure.
+  - Patched the fake validation dataset to include both `caption` and
+    `prompt`.
+  - Modal L40S app `ap-gDHLgh0a5mrwRaJcdNcfVy` reran
+    `pytest tests/local_tests/tdm/ fastvideo/tests/train/methods/test_tdm_config_path.py -q`
+    from base commit `ce68de9f2a08126b649db1c99bb212ef5bea39fa` with the
+    local code/test patch applied. Result: `23 passed in 2.87s`.
+  - Modal L40S app `ap-b6zH5CoNCCcZDhpZ3jwHV4` ran
+    `pre-commit run --files fastvideo/train/methods/distribution_matching/tdm.py tests/local_tests/tdm/test_tdm_method_unit.py fastvideo/tests/train/methods/test_tdm_config_path.py .agents/handoffs/issue-775-handoff.md`
+    from the same base commit with the local patch applied. Result: passed
+    `yapf`, `ruff`, `codespell`, `mypy`, filename-space, and suggestion
+    hooks; PyMarkdown/actionlint had no files to check.
+- Commit/push pending after final GitHub issue/PR refresh.
 
 ## 2026-07-06 Resume Update
 
