@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-09 Wan-Syn replacement DGX job launched
+Last updated: 2026-07-10 Wan-Syn true batch-4 DGX smoke completed
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -310,6 +310,30 @@ handoff keeps only state needed to continue work.
     `oom=false`, still in dataset staging. The log showed
     `Fetching ... files` through file `114`, and the shared dataset directory
     had reached about `17G`.
+  - Final status checked on `2026-07-10`: container exited successfully with
+    `status=exited running=false exit=0 oom=false`, started
+    `2026-07-09T10:09:49Z`, finished `2026-07-09T15:45:06Z`.
+  - Wan-Syn dataset staging completed. The dataset path now reports about
+    `1.6T`, with `13877` parquet files and `111016` rows per SP group.
+  - True batch 4 passed; no gradient-accumulation fallback was used.
+    Metrics path:
+    `/home/mac/fastvideo-runs/issue-775/tdm_wansyn_bsz4_smoke_486e4ff_20260709100811/output_true_bsz4/tracker/metrics.jsonl`.
+    Metrics summary: `8` JSONL rows, steps `1..2`, `2` loss rows,
+    `0` nonfinite scalar metrics.
+  - Step 1: `step_time_sec=488.5659004969`,
+    `total_loss=1.2896826267`, `generator_loss=0.8548319340`,
+    `fake_score_loss=0.4348507524`,
+    `grad_norm/student=1.4613537788`, and
+    `grad_norm/critic=0.2916031182`.
+  - Step 2: `step_time_sec=446.0986256851`,
+    `total_loss=1.0857334137`, `generator_loss=0.8703663349`,
+    `fake_score_loss=0.2153671086`,
+    `grad_norm/student=0.5097031593`, and
+    `grad_norm/critic=0.1462094337`.
+  - The actual training command confirmed the requested dataset path:
+    `training.data.data_path='data/Wan-Syn_77x448x832_600k'`,
+    `training.data.train_batch_size=4`, and
+    `training.loop.gradient_accumulation_steps=1`.
   - Planned command after dataset staging: true
     `training.data.train_batch_size=4`,
     `training.loop.gradient_accumulation_steps=1`,
