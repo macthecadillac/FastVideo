@@ -10,7 +10,7 @@
 - Author: SingleZombie
 - Created: 2025-12-25T08:53:42Z
 - Updated: 2026-06-23T05:39:27Z
-- Current stage: Stage 1 deep dive and plan
+- Current stage: Stage 1 deep dive and plan complete; awaiting user guidance
 - Implementation begun: no
 
 ## Workspace
@@ -31,6 +31,15 @@
 - Created dedicated worktree and branch with:
   - `git worktree add -b issue/960-llsa /tmp/fastvideo-worktrees/issue-960-llsa upstream/main`
 - `origin/main` was at `9d909f5f0457ac91f489d5fc8000931f042b72ce`; `upstream/main` was newer at `a25313beec11965fce04321b9560b58bcb867504`. The issue branch was intentionally based on current upstream target code.
+
+## Resume Notes
+
+- 2026-07-10T06:51:06Z: resumed after an interrupted turn. The `/tmp/fastvideo-worktrees/issue-960-llsa` directory had been removed, leaving stale git worktree metadata.
+- Recreated the issue worktree with `git worktree add --force /tmp/fastvideo-worktrees/issue-960-llsa issue/960-llsa`; branch restored at pushed handoff commit `cca74ef79`.
+- `gh` identity re-verified as `macthecadillac` before GitHub reads.
+- Re-read issue #960 with comments. Issue remains open, labels are `help wanted`, `good first issue`, `unstale`, assignees remain empty, and `updatedAt` remains `2026-06-23T05:39:27Z`.
+- Re-checked open PRs. Narrow search for `960 LLSA Log-linear Sparse Attention` returned no open PRs.
+- Current resume decision: Stage 1 remains complete with no implementation performed. Await user selection between guidance-only/docs, external optional wrapper, or a native kernel port after licensing approval.
 
 ## GitHub Context Reviewed
 
