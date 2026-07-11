@@ -1,0 +1,198 @@
+# Kubernetes pod manifest for the issue-775 TDM training + inference run.
+#
+# The pod runs a single container with all 4 GB200 GPUs of one node. A
+# short-lived init container (imagePullPolicy: IfNotPresent) clones the
+# FastVideo repo at the exact pinned commit, stages the
+# Wan-Syn_77x448x832_600k dataset, and pre-downloads the Wan 2.1 T2V
+# 1.3B Diffusers model snapshot into the shared PVC. The main
+# container is a long-lived shell that the driver script exec's into
+# for training, inference, and artifact download.
+#
+# The ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev image is public, so
+# no imagePullSecrets is required.
+#
+# Parameters resolved by envsubst in run_k8s.sh:
+#   POD_NAME, POD_OUTPUT_ROOT, K8S_NAMESPACE, BRANCH, COMMIT, RUN_NAME
+#
+# Resource requests are deliberately generous to land on a GB200 node
+# and get a full 4-GPU slice:
+#   nvidia.com/gpu: 4
+#   cpu: 96
+#   memory: 768Gi
+#   ephemeral-storage: 1Ti
+#
+# The PVC is mounted at /workspace/run. The init container writes the
+# FastVideo repo, the dataset, and the model cache into
+# ${POD_OUTPUT_ROOT} so subsequent commands (training, inference,
+# download) all see a single durable tree.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${POD_NAME}
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    app: fastvideo-tdm
+    run: ${RUN_NAME}
+    issue: "775"
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+    - name: main
+      image: ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest
+      imagePullPolicy: IfNotPresent
+      command: ["bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          mkdir -p "${POD_OUTPUT_ROOT}/logs"
+          echo "Pod $(hostname) ready at $(date -u +%FT%TZ)"
+          echo "Output root: ${POD_OUTPUT_ROOT}"
+          echo "Sleeping for driver script to drive training + inference."
+          # Keep the container alive without consuming CPU.
+          exec sleep infinity
+      resources:
+        requests:
+          nvidia.com/gpu: 4
+          cpu: "96"
+          memory: 768Gi
+          ephemeral-storage: 1Ti
+        limits:
+          nvidia.com/gpu: 4
+          cpu: "144"
+          memory: 1000Gi
+          ephemeral-storage: 1Ti
+      env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+        - name: HUGGINGFACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+        - name: HF_HOME
+          value: "${POD_OUTPUT_ROOT}/cache/hf"
+        - name: TRANSFORMERS_CACHE
+          value: "${POD_OUTPUT_ROOT}/cache/hf"
+        - name: HF_DATASETS_CACHE
+          value: "${POD_OUTPUT_ROOT}/cache/hf/datasets"
+        - name: HF_HUB_CACHE
+          value: "${POD_OUTPUT_ROOT}/cache/hf/hub"
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: TQDM_DISABLE
+          value: "1"
+        - name: WANDB_MODE
+          value: "disabled"
+        - name: WANDB_API_KEY
+          value: ""
+        - name: TORCH_NCCL_ASYNC_ERROR_HANDLING
+          value: "1"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace/run
+        - name: dshm
+          mountPath: /dev/shm
+        - name: cache-tmp
+          mountPath: /tmp
+  initContainers:
+    - name: stage
+      image: ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest
+      imagePullPolicy: IfNotPresent
+      command: ["bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          export HF_HOME="${POD_OUTPUT_ROOT}/cache/hf"
+          mkdir -p "${POD_OUTPUT_ROOT}/"{logs,scripts,output,cache/hf}
+          cd "${POD_OUTPUT_ROOT}"
+          echo "[stage] $(date -u +%FT%TZ) cloning FastVideo at ${COMMIT}"
+          git clone --no-checkout --filter=blob:none \
+              https://x-access-token:${GH_TOKEN}@github.com/macthecadillac/FastVideo.git \
+              repo
+          cd repo
+          git checkout "${COMMIT}"
+          echo "[stage] HEAD: $(git rev-parse HEAD)"
+          echo "[stage] installing editable (no deps)"
+          PYTHONPATH="${POD_OUTPUT_ROOT}/repo" \
+              python -m pip install --no-deps -e .
+          echo "[stage] downloading Wan 2.1 T2V 1.3B Diffusers"
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+              cache_dir="${POD_OUTPUT_ROOT}/cache/hf",
+          )
+          PY
+          echo "[stage] downloading Wan-Syn_77x448x832_600k"
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="FastVideo/Wan-Syn_77x448x832_600k",
+              repo_type="dataset",
+              cache_dir="${POD_OUTPUT_ROOT}/cache/hf",
+          )
+          PY
+          mkdir -p "${POD_OUTPUT_ROOT}/data"
+          ln -sfn "${POD_OUTPUT_ROOT}/cache/hf/hub/datasets--FastVideo--Wan-Syn_77x448x832_600k/snapshots"/*/* "${POD_OUTPUT_ROOT}/data/Wan-Syn_77x448x832_600k" 2>/dev/null || true
+          echo "[stage] done at $(date -u +%FT%TZ)"
+      env:
+        - name: GH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-token-secret
+              key: GITHUB_TOKEN
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+        - name: HUGGINGFACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+        - name: HF_HOME
+          value: "${POD_OUTPUT_ROOT}/cache/hf"
+        - name: HF_HUB_CACHE
+          value: "${POD_OUTPUT_ROOT}/cache/hf/hub"
+        - name: HF_DATASETS_CACHE
+          value: "${POD_OUTPUT_ROOT}/cache/hf/datasets"
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+      resources:
+        requests:
+          cpu: "16"
+          memory: 64Gi
+          ephemeral-storage: 200Gi
+        limits:
+          cpu: "32"
+          memory: 128Gi
+          ephemeral-storage: 400Gi
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace/run
+        - name: dshm
+          mountPath: /dev/shm
+        - name: cache-tmp
+          mountPath: /tmp
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: lustre-pvc-vllm
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Gi
+    - name: cache-tmp
+      emptyDir:
+        sizeLimit: 200Gi
