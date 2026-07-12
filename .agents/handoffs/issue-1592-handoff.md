@@ -12,8 +12,8 @@
 - Verified GitHub identity: `macthecadillac` via `gh api user --jq .login`
 - Authentication note: repository/GitHub commands require approved out-of-sandbox execution because the local filesystem sandbox fails to mount `devpts`.
 - Started: `2026-07-12T08:36:52Z`
-- Last update: `2026-07-12T08:59:27Z`
-- Current stage: Stage 1 complete, awaiting user guidance
+- Last update: `2026-07-12T09:09:55Z`
+- Current stage: Stage 2 - evidence-first Modal validation
 - Implementation begun: no
 
 ## Issue Snapshot
@@ -104,6 +104,12 @@ Recommendation: approve Approach 1. Do not commit a GPU-policy/reference change 
 8. Run `pre-commit run --all-files` before a future draft PR. Open no PR before explicit Stage 4 direction; new PRs must be draft and existing draft status must not change.
 
 Pass criteria: verified device identities, captured summaries, exact comparisons, repeatable support for rebaselining, contract coverage for allocation changes, required Modal validation, and passing pre-commit.
+
+## User-Selected Approach
+
+- `2026-07-12`: The user approved the recommended evidence-first decision tree without changes.
+- The Stage 2 re-check at `2026-07-12T09:09:55Z` verified identity `macthecadillac`, issue #1592 remains open with only the automated welcome comment, no open PR references/closes #1592, and ready-for-review PR #1591 remains VSA-only. No GitHub state was modified.
+- Stage 2 begins with temporary validation-only H200 launcher support and offline W&B summary extraction. These temporary changes must be removed before selecting or committing any production fix.
 
 ## Compatibility, Performance, And Documentation
 
