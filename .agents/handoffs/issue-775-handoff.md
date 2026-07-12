@@ -2634,3 +2634,36 @@ For model/pipeline changes, also check:
 - Targeted FastWan T2V/TI2V SSIM regressions remain unrun and should be
   completed before merging.
 - No PR was opened and no GitHub issue or PR state was modified.
+
+## 2026-07-12 Independent Fake-Score SNR Adjudication
+
+- Independently reviewed commit
+  `a2bab8a665c27a3e3236cd9bdc9e75873d4d5857` in isolated worktree
+  `/tmp/fastvideo-review-775-tdm` on temporary branch
+  `adjudicator/775-fake-score-snr-a2bab8`.
+- Verified `gh` identity as `macthecadillac`; issue #775 remains open and
+  assigned to `macthecadillac`, its two comments are unchanged, and no open PR
+  matched issue 775 or TDM.
+- Accepted the reviewer finding. The official
+  `Luo-Yihong/TDM/train_tdm_demo.py` computes x0-prediction MSE and multiplies
+  each sample by `min(SNR, 5)` and its importance ratio. FastVideo also
+  computes x0-prediction MSE, so changing from DDPM to Wan's linear flow
+  corruption changes the SNR definition to `((1 - sigma) / sigma)^2` but does
+  not introduce division by SNR. The original issue exploration explicitly
+  called for matching the reference loss shape and contains no derivation for
+  the normalization.
+- The committed `min(snr, clip) / snr` expression equals `1.0` whenever SNR is
+  below the clip. For the shipped shift-8 schedule at `sigma=0.96`, this
+  replaces the intended weight `1/576`, approximately `0.001736`, with `1.0`.
+- Applied the minimal correction in
+  `fastvideo/train/methods/distribution_matching/tdm.py`: use clipped flow SNR
+  directly. Added focused numerical regression coverage in
+  `tests/local_tests/tdm/test_tdm_method_unit.py` for shifted schedule sigmas
+  `0.96`, `8/9`, and `8/11`, plus a low-sigma clipping case.
+- Validation:
+  - `git diff --check`: passed.
+  - `python3 -m py_compile` on the changed implementation and test: passed.
+  - Modal L40S app `ap-GNW3QAM6xOlt6Qmdj9Cyse` checked out exact commit
+    `a2bab8a665c27a3e3236cd9bdc9e75873d4d5857`, applied only the implementation
+    and test patch, and ran `pytest tests/local_tests/tdm/test_tdm_method_unit.py
+    -q`: `17 passed in 16.34s`.

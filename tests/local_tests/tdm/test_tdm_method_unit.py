@@ -376,6 +376,38 @@ def test_tdm_separate_noise_interval_excludes_terminal_sigma() -> None:
         assert context.target_trajectory_index in {1, 2}
 
 
+@pytest.mark.parametrize(
+    ("sigma", "expected_weight"),
+    [
+        (0.96, 1.0 / 576.0),
+        (8.0 / 9.0, 1.0 / 64.0),
+        (8.0 / 11.0, 9.0 / 64.0),
+        (0.25, 5.0),
+    ],
+)
+def test_tdm_fake_score_uses_clipped_flow_snr_directly(
+    sigma: float,
+    expected_weight: float,
+) -> None:
+    method, _, _ = _build_method()
+    context = SimpleNamespace(
+        sigma_to=torch.tensor([sigma], dtype=torch.float32),
+        mixed_noise=torch.zeros(2, 1, dtype=torch.float32),
+        proposal_noise=torch.zeros(2, 1, dtype=torch.float32),
+    )
+
+    components = method._tdm_fake_score_weight_components(context)
+
+    assert_close(
+        components["snr_weight"],
+        torch.tensor([expected_weight], dtype=torch.float32),
+    )
+    assert_close(
+        components["weights"],
+        torch.full((2, ), expected_weight, dtype=torch.float32),
+    )
+
+
 def test_tdm_to_terminal_noise_interval_targets_highest_non_terminal_sigma() -> None:
     method, _, _ = _build_method(method_overrides={
         "noise_interval_mode": "to_terminal",

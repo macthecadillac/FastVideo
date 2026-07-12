@@ -694,7 +694,7 @@ class TDMMethod(DMD2Method):
         context: TDMSampleContext,
     ) -> dict[str, torch.Tensor]:
         snr = flow_snr(context.sigma_to, eps=self._sigma_eps)
-        snr_weight = torch.minimum(snr, torch.full_like(snr, self._snr_clip)) / snr.clamp_min(self._sigma_eps)
+        snr_weight = torch.minimum(snr, torch.full_like(snr, self._snr_clip))
 
         mixed_sq = _mean_except_batch(context.mixed_noise.float().square())
         proposal_sq = _mean_except_batch(context.proposal_noise.float().square())
