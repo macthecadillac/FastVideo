@@ -51,8 +51,11 @@ production code.
 The generator update preserves the reference's three noise levels for each
 sample: the student predicts at the source sigma, its effective flow noise
 reconstructs a cleaner intermediate, and fresh noise moves that reconstruction
-to a score target between the intermediate and source sigmas. Source,
-intermediate, and target points are sampled independently per batch element.
+to a score target. The source is always sampled from the generated trajectory;
+`use_randmid` randomizes the cleaner intermediate point. The target bounds are
+`intermediate <= target < source` in `separate` mode and
+`intermediate <= target < terminal` in `to_terminal` mode. Sampling is
+independent per batch element.
 
 Periodic validation loads a separate inference pipeline while the student,
 teacher, and critic exist. The shipped recipe therefore offloads training state

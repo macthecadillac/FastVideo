@@ -2925,3 +2925,22 @@ For model/pipeline changes, also check:
 - Next: sign/commit/push this completed patch, run full pre-commit on the exact
   commit, and resume the mandatory fresh review cycle. Do not open a PR or
   launch Kubernetes until that cycle is clean.
+
+## 2026-07-12 Checkpoint And Documentation Adjudication
+
+- Independently reviewed issue #775 and its two comments with `gh` authenticated
+  as `macthecadillac`; the issue remains open and assigned to
+  `macthecadillac`. No open PR uses head `issue/775-tdm`.
+- Accepted the checkpoint finding: `save_final()` could call `save()` again for
+  a step just saved by `maybe_save()`, temporarily removing the valid
+  `.complete` marker. Added `_last_saved_step` deduplication and an aligned
+  500-step regression.
+- Accepted the documentation finding: source trajectory indices are always
+  sampled, `use_randmid` randomizes the cleaner intermediate, and target
+  selection includes equality with the intermediate. Corrected the shipped
+  YAML comments and TDM test README to document `intermediate <= target < source`
+  for `separate` and `intermediate <= target < terminal` for `to_terminal`.
+- Modal L40S app `ap-vhX5623F3bqTS3x7MvDT4H` ran
+  `pytest fastvideo/tests/train/utils/test_checkpoint.py -q` with the local
+  code/test patch: `35 passed, 14 warnings in 2.26s`. `git diff --check`
+  passed. Signed commit and push are pending.

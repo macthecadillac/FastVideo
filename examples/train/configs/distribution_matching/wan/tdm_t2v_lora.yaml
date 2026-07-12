@@ -59,9 +59,10 @@ method:
   # prediction with gradients.
   student_sample_type: ode
 
-  # Fake-score noising bridge. The implementation samples a generated
-  # trajectory point and moves it to a strictly larger sigma with the
-  # Wan-native flow transition.
+  # Fake-score noising bridge. The source is always sampled from the generated
+  # trajectory. use_randmid randomizes its cleaner intermediate point. The
+  # target bounds are intermediate <= target < source for "separate" and
+  # intermediate <= target < terminal for "to_terminal".
   noise_interval_mode: separate
   use_randmid: true
   snr_clip: 5.0

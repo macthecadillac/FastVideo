@@ -438,3 +438,13 @@ def test_maybe_save_triggers_on_each_interval(tmp_path: Path) -> None:
     for step in range(1, 41):
         mgr.maybe_save(step=step)
     assert calls == [10, 20, 30, 40]
+
+
+def test_save_final_dedupes_step_saved_on_interval(tmp_path: Path) -> None:
+    mgr = _make_manager(tmp_path, save_steps=100)
+    calls = _record_save_calls(mgr)
+
+    mgr.maybe_save(step=500)
+    mgr.save_final(step=500)
+
+    assert calls == [500]
