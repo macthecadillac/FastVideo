@@ -2398,3 +2398,70 @@ Under `.agents/k8s/`:
 - Per Stage 3, pass these findings without parent interpretation to a fresh
   adjudicator/fixer for independent acceptance/rejection and any accepted
   code fixes. No K8s workload has been launched.
+
+### Independent Adjudicator/Fixer Pass For K8s Findings
+
+- Resumed in `/tmp/fastvideo-worktrees/issue-775-tdm` at clean pushed head
+  `49c4436fe`, with implementation commit `a0f20d1b7` under review.
+- Verified `gh` identity as `macthecadillac`, read issue #775 and both comments,
+  and refreshed the upstream open PR list. The issue remains open and assigned
+  to `macthecadillac`; targeted open PR search `775 OR TDM` returned `[]`.
+- Independently accepted all six reviewer findings:
+  1. `train_batch_size` is passed directly to `DP_SP_BatchSampler`, which
+     gives each of four SP groups a distinct local batch. Local batch 4 was
+     therefore global batch 16, not 4.
+  2. Empty `training.tracker.trackers` plus a nonempty project name appends
+     `wandb`; `WANDB_MODE=disabled` does not instantiate `JsonlTracker`, so
+     the required `tracker/metrics.jsonl` would not exist.
+  3. The zero-step trainer still calls `save_final(0)`. Inference inherited
+     save interval 20 and retention limit 3 while targeting the training
+     output directory, so checkpoint-0 cleanup could remove checkpoints 100
+     and 200.
+  4. `JsonlTracker` serializes NaN/Inf as a `nonfinite_float` dictionary, but
+     the validator only inspected numeric leaves and ignored the marker.
+  5. `resume_k8s.sh` only recreated a missing pod; a retained `Failed` pod
+     proceeded to `kubectl exec` and could not recover.
+  6. checkpoint directories, DCP directories, and `metadata.json` are created
+     before distributed save and RNG barriers complete, while `latest`
+     previously required only a DCP directory.
+- Implemented corrections without creating any Kubernetes resource:
+  - `run_train.sh` and `run_preflight.sh` now use local batch 1 and explicitly
+    select `[jsonl]`. Preflight reads the actual JSONL `config.json` and
+    requires local batch 1, global batch 4, JSONL tracking, steps 1 and 2, and
+    no preflight checkpoint.
+  - `run_infer.sh` uses a per-checkpoint scratch output directory, disables
+    checkpoint saving and retention, selects `[none]` tracking, and reruns
+    training-output validation after all student inference passes.
+  - `validate_output.py` detects both numeric nonfinite values and serialized
+    `nonfinite_float` markers, and requires DCP metadata plus `.complete` for
+    each expected checkpoint. Added a focused test using the tracker sanitizer's
+    actual NaN representation.
+  - `resume_k8s.sh` inspects pod phase/readiness, deletes retained terminal
+    pods, recreates them from the durable manifest, and resumes from the newest
+    checkpoint carrying `.complete` rather than any directory with metadata.
+  - `CheckpointManager` writes new-format metadata declaring `.complete`,
+    removes any stale marker before overwrite, and atomically publishes the
+    marker only after DCP and RNG barriers. New-format discovery rejects a
+    missing marker; legacy checkpoints remain compatible when DCP's own
+    `.metadata` exists. Added tests for incomplete fallback, explicit rejection,
+    legacy discovery, and marker ordering.
+  - Updated `.agents/k8s/PREP.md` with corrected global-batch, tracker,
+    inference-isolation, terminal-pod, and checkpoint-completion behavior.
+- Non-launch validation so far:
+  - `bash -n` passed for all five K8s shell scripts.
+  - AST parsing passed for all changed Python and Python-test files.
+  - `git diff --check` passed.
+  - Changed-file `uvx pre-commit run --files ...` in the issue worktree passed
+    yapf, ruff, codespell, filename-space, and suggestion hooks; mypy stopped
+    before checking code with the known hyphenated-worktree error
+    `issue-775-tdm is not a valid Python package name`.
+  - Exported the exact staged binary patch, applied it to clean local clone
+    `/tmp/fastvideo_worktrees/issue_775_k8s_adjudication_49c4436` at base
+    `49c4436fe`, and reran the same changed-file pre-commit command. Every hook
+    passed there, including mypy.
+  - Loading the full resolved FastVideo config with the workstation's base
+    Python was unavailable because this machine intentionally lacks Torch;
+    no local project tests were run, consistent with repository guidance.
+- No staging pod, GPU pod, preflight, training, inference, Modal app, or other
+  workload was launched. Remaining steps are signed commit, signature
+  verification, and immediate push.

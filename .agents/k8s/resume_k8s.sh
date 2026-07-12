@@ -34,10 +34,14 @@ pod_exists() {
     kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" \
         -o jsonpath='{.metadata.name}' 2>/dev/null
 }
-if [[ "$(pod_exists)" != "${POD_NAME}" ]]; then
+recreate_pod() {
     if [[ "${RECREATE_POD}" != "1" || ! -f "${POD_MANIFEST}" ]]; then
-        echo "ERROR: pod is missing and cannot be recreated from ${POD_MANIFEST}" >&2
+        echo "ERROR: pod cannot be recreated from ${POD_MANIFEST}" >&2
         exit 1
+    fi
+    if [[ "$(pod_exists)" == "${POD_NAME}" ]]; then
+        kubectl --namespace "${K8S_NAMESPACE}" delete pod "${POD_NAME}" \
+            --wait=true --timeout=5m
     fi
     echo "=== Recreating GPU pod from durable manifest ==="
     kubectl apply --dry-run=server -f "${POD_MANIFEST}" >/dev/null
@@ -45,6 +49,31 @@ if [[ "$(pod_exists)" != "${POD_NAME}" ]]; then
     kubectl --namespace "${K8S_NAMESPACE}" wait --for=condition=Ready \
         "pod/${POD_NAME}" --timeout=15m
     POD_RECREATED=1
+}
+
+if [[ "$(pod_exists)" != "${POD_NAME}" ]]; then
+    recreate_pod
+else
+    pod_phase=$(kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" \
+        -o jsonpath='{.status.phase}')
+    case "${pod_phase}" in
+        Failed|Succeeded|Unknown)
+            echo "=== Existing pod is terminal (phase=${pod_phase}) ==="
+            recreate_pod
+            ;;
+        Pending|Running)
+            if ! kubectl --namespace "${K8S_NAMESPACE}" wait --for=condition=Ready \
+                "pod/${POD_NAME}" --timeout=15m; then
+                kubectl --namespace "${K8S_NAMESPACE}" describe pod "${POD_NAME}" || true
+                echo "ERROR: pod phase=${pod_phase} did not become Ready" >&2
+                exit 1
+            fi
+            ;;
+        *)
+            echo "ERROR: unrecognized pod phase: ${pod_phase}" >&2
+            exit 1
+            ;;
+    esac
 fi
 
 kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
@@ -65,12 +94,19 @@ training_process_alive() {
     [[ -n "${pid}" ]] && kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
         kill -0 "${pid}" 2>/dev/null
 }
-launch_from_latest() {
+latest_complete_checkpoint() {
+    kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- sh -c \
+        "find '${POD_OUTPUT_ROOT}/output' -mindepth 2 -maxdepth 2 -type f \
+            -name .complete -path '*/checkpoint-*/*' -printf '%h\\n' | sort -V | tail -n 1"
+}
+launch_from_checkpoint() {
+    local checkpoint=$1
     local command
     command="$(cat <<EOF
 set -euo pipefail
 cd '${POD_OUTPUT_ROOT}'
-nohup env RESUME_FROM_CHECKPOINT=latest \\
+rm -f output/.train_done output/.train_done.tmp
+nohup env RESUME_FROM_CHECKPOINT='${checkpoint}' \\
     bash repo/.agents/k8s/run_train.sh '${POD_OUTPUT_ROOT}' \\
     > logs/train.launcher.out 2>&1 < /dev/null &
 TRAIN_PID=\$!
@@ -83,14 +119,20 @@ EOF
     kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- bash -lc "${command}"
 }
 
-if (( POD_RECREATED == 1 )) && ! training_done; then
-    if kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-        sh -c "ls '${POD_OUTPUT_ROOT}'/output/checkpoint-*/metadata.json >/dev/null 2>&1"; then
-        echo "=== Pod was recreated; resuming training from latest checkpoint ==="
-        launch_from_latest
-    else
-        echo "ERROR: pod was lost before the first durable checkpoint" >&2
-        exit 1
+if (( POD_RECREATED == 1 )); then
+    completed_status=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+        cat "${TRAIN_DONE_FLAG}" 2>/dev/null || true)
+    if [[ "${completed_status}" != *"rc=0"* ]]; then
+        latest_checkpoint=$(latest_complete_checkpoint)
+        if [[ -z "${latest_checkpoint}" ]]; then
+            kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+                find "${POD_OUTPUT_ROOT}/output" -maxdepth 2 -type f -name metadata.json \
+                -print 2>/dev/null || true
+            echo "ERROR: no completed checkpoint is available after pod loss" >&2
+            exit 1
+        fi
+        echo "=== Pod was recreated; resuming from ${latest_checkpoint} ==="
+        launch_from_checkpoint "${latest_checkpoint}"
     fi
 fi
 

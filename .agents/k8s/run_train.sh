@@ -29,13 +29,14 @@ export NCCL_DEBUG=WARN
 TRAIN_ARGS=(
     --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml
     --training.data.data_path data/Wan-Syn_77x448x832_600k
-    --training.data.train_batch_size 4
+    --training.data.train_batch_size 1
     --training.loop.gradient_accumulation_steps 1
     --training.loop.max_train_steps 500
     --method.generator_update_interval 1
     --training.checkpoint.output_dir "${OUT_DIR}"
     --training.checkpoint.training_state_checkpointing_steps 100
     --training.checkpoint.checkpoints_total_limit 6
+    --training.tracker.trackers "[jsonl]"
     --training.tracker.project_name distillation_wan
     --training.tracker.run_name "${RUN_NAME:-tdm_bsz4_500_k8s}"
     --callbacks.validation.every_steps 0

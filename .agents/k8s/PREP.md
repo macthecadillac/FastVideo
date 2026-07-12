@@ -5,7 +5,7 @@ Status: implemented and awaiting separate launch approval
 
 ## Goal
 
-Train the issue-775 Wan TDM student for 500 steps at true batch size 4,
+Train the issue-775 Wan TDM student for 500 steps at global batch size 4,
 then compare three student checkpoints against the base Wan model at four
 steps and the base Wan teacher at 50 steps. No Kubernetes workload should be
 created until the user separately approves launch.
@@ -59,9 +59,11 @@ CPU-only staging pod that:
 
 Only after staging succeeds does the driver create the four-GB200 pod. Before
 long training, `run_preflight.sh` requires exactly four CUDA devices, runs a
-four-rank NCCL all-reduce, and executes two real TDM steps with true batch size
-4 and the production dataset/config. Any failure leaves the pod available for
-inspection and prevents the 500-step process from starting.
+four-rank NCCL all-reduce, and executes two real TDM steps with local batch
+size 1 on each of four data-parallel groups. It then checks the JSONL tracker's
+resolved run configuration and requires local batch 1, global batch 4, steps
+1 and 2, and no preflight checkpoints. Any failure leaves the pod available
+for inspection and prevents the 500-step process from starting.
 
 ## Training parameters
 
@@ -69,7 +71,8 @@ inspection and prevents the 500-step process from starting.
 - Model: `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`
 - Dataset: `data/Wan-Syn_77x448x832_600k`
 - GPUs: 4; HSDP shard dimension 4; TP/SP 1
-- Batch size: 4; gradient accumulation: 1
+- Local batch size: 1 per data-parallel group
+- Global batch size: 4; gradient accumulation: 1
 - Steps: 500
 - Generator update interval: 1
 - TDM timesteps: `[1000, 750, 500, 250]`
@@ -81,14 +84,17 @@ inspection and prevents the 500-step process from starting.
 - EMA: decay 0.98 from step 0
 - Checkpoints: every 100 steps; retain up to 6
 - Validation during training: disabled
-- W&B: disabled; durable JSONL tracker enabled by the training stack
+- W&B: disabled; durable JSONL tracker selected explicitly
 
 The training wrapper writes `.train_done` atomically with the torchrun return
-code. `resume_k8s.sh` refuses inference unless `rc=0`, checkpoints 100 through
-500 exist with matching metadata, tracker steps 1 through 500 exist, and all
-numeric tracker values are finite. If the GPU pod is evicted after a checkpoint,
-the resume driver can recreate it and resume from `latest`; loss before the
-first checkpoint remains unrecoverable.
+code. Every new-format checkpoint writes `.complete` only after DCP and RNG
+state barriers finish. `resume_k8s.sh` deletes retained terminal pod objects,
+recreates the GPU pod from the durable manifest, and resumes from the newest
+checkpoint carrying that marker. It refuses inference unless `rc=0`,
+checkpoints 100 through 500 have matching metadata, DCP metadata, and
+completion markers, tracker steps 1 through 500 exist, and tracker values do
+not contain numeric nonfinite values or JSONL nonfinite markers. Loss before
+the first completed checkpoint remains unrecoverable.
 
 ## Comparison outputs
 
@@ -101,7 +107,9 @@ For the same four prompts, seed 1000, guidance 6.0, flow shift 8, 832x448,
 
 The inference wrapper requires 20 MP4 files in total and validates resolution,
 frame count, and frame rate with `ffprobe`. Any student, base, teacher, or media
-validation failure returns nonzero and does not write `.infer_done`.
+validation failure returns nonzero and does not write `.infer_done`. Student
+validation uses an isolated runtime output directory with checkpoint saving and
+tracking disabled, so it cannot alter retained training checkpoints or metrics.
 
 ## Launch and reconnect commands
 

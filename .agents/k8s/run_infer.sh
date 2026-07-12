@@ -32,7 +32,8 @@ echo "[run_infer] start $(date -u +%FT%TZ)"
 for step in 100 300 500; do
     CHECKPOINT_DIR="${OUT_DIR}/checkpoint-${step}"
     STUDENT_OUT="${VALIDATION_DIR}/student_tdm_4step/checkpoint-${step}"
-    mkdir -p "${STUDENT_OUT}"
+    RUNTIME_OUT="${STUDENT_OUT}/runtime"
+    mkdir -p "${STUDENT_OUT}" "${RUNTIME_OUT}"
     echo "[run_infer] student checkpoint-${step}, four steps"
     torchrun --standalone --nproc_per_node=1 \
         -m fastvideo.train.entrypoint.train \
@@ -41,10 +42,11 @@ for step in 100 300 500; do
         --training.data.train_batch_size 1 \
         --training.loop.gradient_accumulation_steps 1 \
         --training.loop.max_train_steps 0 \
-        --training.checkpoint.output_dir "${OUT_DIR}" \
+        --training.checkpoint.output_dir "${RUNTIME_OUT}" \
         --training.checkpoint.resume_from_checkpoint "${CHECKPOINT_DIR}" \
-        --training.tracker.project_name distillation_wan \
-        --training.tracker.run_name "${RUN_NAME:-tdm_bsz4_500_k8s}_validation_${step}" \
+        --training.checkpoint.training_state_checkpointing_steps 0 \
+        --training.checkpoint.checkpoints_total_limit 0 \
+        --training.tracker.trackers "[none]" \
         --callbacks.validation.every_steps 1 \
         --callbacks.validation.sampling_steps "[4]" \
         --callbacks.validation.sampling_timesteps "[1000,750,500,250]" \
@@ -54,6 +56,7 @@ for step in 100 300 500; do
         --pipeline.dmd_sample_type ode \
         2>&1 | tee "${LOG_DIR}/student_infer_step${step}.log"
 done
+python .agents/k8s/validate_output.py "${OUT_DIR}"
 
 BASE_OUT="${VALIDATION_DIR}/base_wan_4step"
 TEACHER_OUT="${VALIDATION_DIR}/teacher_wan_50step"
