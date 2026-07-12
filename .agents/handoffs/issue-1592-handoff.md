@@ -12,7 +12,7 @@
 - Verified GitHub identity: `macthecadillac` via `gh api user --jq .login`
 - Authentication note: repository/GitHub commands require approved out-of-sandbox execution because the local filesystem sandbox fails to mount `devpts`.
 - Started: `2026-07-12T08:36:52Z`
-- Last update: `2026-07-12T09:24:50Z`
+- Last update: `2026-07-12T09:28:41Z`
 - Current stage: Stage 2 complete - evidence supports no production change
 - Implementation begun: no
 
@@ -166,3 +166,28 @@ Pass criteria: verified device identities, captured summaries, exact comparisons
 2. GPG-sign, commit, and push this Stage 1 handoff.
 3. Present Stage 1 and wait for the user's approach selection.
 4. If Approach 1 is approved, begin Stage 2 paired Modal diagnostics. No implementation has been performed.
+
+## Draft Issue Comment
+
+Status: drafted at the user's request; not posted. Awaiting explicit approval.
+
+```markdown
+@SolitaryThinker, following up on the Vanilla concern you raised in PR #1591, I ran the current Vanilla regression on explicitly requested L40S and H200 allocations.
+
+Results:
+
+- 2x L40S (`ap-dTd6FnWC85KR6uPFtK0MmE`): `1 passed, 1 warning in 119.90s`
+  - `grad_norm=0.1174668` vs L40S reference `0.1158294` (diff `0.0016374`, threshold `0.3`)
+  - `train_loss=0.1382553` vs L40S reference `0.1382360` (diff `0.0000193`, threshold `0.0025`)
+- 2x H200 (`ap-ui8b9NJk54ZLD7D5KbIPeK`): `1 passed, 1 warning in 135.72s`
+  - `grad_norm=0.1180642` vs H200 reference `0.0643853` (diff `0.0536789`, threshold `0.3`)
+  - `train_loss=0.1382403` vs H200 reference `0.1383166` (diff `0.0000764`, threshold `0.0025`)
+
+Both timing fields also passed. Each fresh run passes not only against its own device reference, but also against the other device's reference. The fresh L40S/H200 correctness metrics are especially close (`grad_norm` diff `0.0005974`; `train_loss` diff `0.0000150`).
+
+I also checked recent GitHub status history: 11 sampled Vanilla training jobs passed. The only failure occurred when Vanilla, LoRA, and VSA training all failed together, and I found no same-head Vanilla failure-then-success retry pattern like the VSA case addressed by #1591.
+
+Based on this evidence, I do not see a current Vanilla regression or device-dependent flake. I recommend keeping the existing multi-GPU reference selection unchanged and closing #1592 without a code change; refreshing or pinning the lane would add churn without fixing a reproduced failure.
+
+Does this resolve the follow-up concern from #1591 from your perspective?
+```
