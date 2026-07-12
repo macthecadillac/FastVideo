@@ -2667,3 +2667,13 @@ For model/pipeline changes, also check:
     `a2bab8a665c27a3e3236cd9bdc9e75873d4d5857`, applied only the implementation
     and test patch, and ran `pytest tests/local_tests/tdm/test_tdm_method_unit.py
     -q`: `17 passed in 16.34s`.
+- Production `DmdDenoisingStage.forward` and FastWan T2V/TI2V SSIM remain unrun.
+- Signed code/test/handoff commit
+  `23445a03c5d86305207ff23ce629b1e3dd53b925`
+  `[fix]: align TDM fake-score SNR weighting` was created. `git log -1
+  --show-signature` reported a good signature from
+  `Mac Lee <macthecadillac@gmail.com>` using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887`.
+- Pushed commit `23445a03c` to `origin/issue/775-tdm`; the remote advanced
+  from `a2bab8a66` to `23445a03c`.
+- No PR was opened and no GitHub issue or PR state was modified.
