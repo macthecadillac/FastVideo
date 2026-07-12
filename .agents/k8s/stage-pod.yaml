@@ -38,7 +38,7 @@ spec:
 
           echo "[stage] start $(date -u +%FT%TZ) arch=$(uname -m)"
           [[ "$(uname -m)" == "aarch64" ]]
-          python -c "import huggingface_hub, torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+          python3 -c "import huggingface_hub, torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
           mkdir -p "${SHARED_HF_HOME}" \
               "${POD_OUTPUT_ROOT}/logs" \
@@ -65,7 +65,7 @@ spec:
           echo "[stage] repo HEAD ${COMMIT}"
 
           echo "[stage] staging Wan 2.1 T2V 1.3B"
-          MODEL_SNAPSHOT=$(python - <<'PYMODEL'
+          MODEL_SNAPSHOT=$(python3 - <<'PYMODEL'
           import os
           from huggingface_hub import snapshot_download
 
@@ -79,7 +79,7 @@ spec:
           printf '%s\n' "${MODEL_SNAPSHOT}" > "${POD_OUTPUT_ROOT}/.model_snapshot"
 
           echo "[stage] staging Wan-Syn_77x448x832_600k"
-          DATASET_SNAPSHOT=$(python - <<'PYDATA'
+          DATASET_SNAPSHOT=$(python3 - <<'PYDATA'
           import os
           from huggingface_hub import snapshot_download
 

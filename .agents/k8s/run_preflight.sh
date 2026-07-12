@@ -27,7 +27,7 @@ export NCCL_DEBUG=WARN
 
 echo "[preflight] start $(date -u +%FT%TZ) arch=$(uname -m)"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
-GPU_COUNT=$(python -c "import torch; print(torch.cuda.device_count())")
+GPU_COUNT=$(python3 -c "import torch; print(torch.cuda.device_count())")
 [[ "${GPU_COUNT}" == "4" ]]
 
 cat > /tmp/issue775_nccl_preflight.py <<'PYDIST'
@@ -70,7 +70,7 @@ torchrun --standalone --nproc_per_node=4 \
     --pipeline.dmd_sample_type ode \
     2>&1 | tee "${LOG_DIR}/preflight.log"
 
-python - "${PREFLIGHT_DIR}" <<'PYCONFIG'
+python3 - "${PREFLIGHT_DIR}" <<'PYCONFIG'
 import json
 import sys
 from pathlib import Path

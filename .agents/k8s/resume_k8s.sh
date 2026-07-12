@@ -172,7 +172,7 @@ while true; do
 done
 
 kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-    python "${POD_OUTPUT_ROOT}/repo/.agents/k8s/validate_output.py" \
+    python3 "${POD_OUTPUT_ROOT}/repo/.agents/k8s/validate_output.py" \
         "${POD_OUTPUT_ROOT}/output"
 
 INFER_DONE="${POD_OUTPUT_ROOT}/validation_step500/.infer_done"

@@ -24,7 +24,7 @@ export WANDB_API_KEY=""
 export PYTHONUNBUFFERED=1
 export TQDM_DISABLE=1
 
-python .agents/k8s/validate_output.py "${OUT_DIR}"
+python3 .agents/k8s/validate_output.py "${OUT_DIR}"
 cp -f examples/training/finetune/Wan2.1-VSA/Wan-Syn-Data/validation_4.json \
     "${VALIDATION_DIR}/validation_4.json"
 
@@ -56,7 +56,7 @@ for step in 100 300 500; do
         --pipeline.dmd_sample_type ode \
         2>&1 | tee "${LOG_DIR}/student_infer_step${step}.log"
 done
-python .agents/k8s/validate_output.py "${OUT_DIR}"
+python3 .agents/k8s/validate_output.py "${OUT_DIR}"
 
 BASE_OUT="${VALIDATION_DIR}/base_wan_4step"
 TEACHER_OUT="${VALIDATION_DIR}/teacher_wan_50step"
@@ -105,13 +105,13 @@ for index, prompt in enumerate(prompts):
         output_path=str(teacher_output / f"teacher_wan_50step_prompt{index}.mp4"),
     )
 PYREF
-python /tmp/issue775_reference_infer.py \
+python3 /tmp/issue775_reference_infer.py \
     "${VALIDATION_DIR}/validation_4.json" \
     "${BASE_OUT}" \
     "${TEACHER_OUT}" \
     2>&1 | tee "${LOG_DIR}/reference_infer.log"
 
-python - "${VALIDATION_DIR}" <<'PYVERIFY'
+python3 - "${VALIDATION_DIR}" <<'PYVERIFY'
 import json
 import subprocess
 import sys

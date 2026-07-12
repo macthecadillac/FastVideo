@@ -50,7 +50,7 @@ fi
 echo "[run_train] start $(date -u +%FT%TZ)"
 echo "[run_train] output=${OUT_DIR} resume=${RESUME_FROM_CHECKPOINT:-none}"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
-python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'avail', torch.cuda.is_available(), 'devs', torch.cuda.device_count())"
+python3 -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'avail', torch.cuda.is_available(), 'devs', torch.cuda.device_count())"
 
 set +e
 torchrun --standalone --nproc_per_node=4 \

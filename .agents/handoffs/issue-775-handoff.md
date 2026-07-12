@@ -2580,3 +2580,22 @@ For model/pipeline changes, also check:
   been exercised end to end. User already approved running the test plan.
 - Stage 3 is complete again. Relaunch with a new run name after this handoff
   update is signed/pushed. Do not open a PR.
+
+
+## 2026-07-12 CPU Staging Runtime Failure
+
+- Relaunched the approved plan as
+  `tdm-bsz4-500-k8s-20260712081223`, pinned to commit
+  `29ac15ee9faee715d3b6f4d4cbfc74e4344c7c668`.
+- Both rendered manifests passed Kubernetes server-side dry-run. The CPU-only
+  staging pod scheduled on Ready `VM.Standard.A2.Flex` node `10.0.143.72`; no
+  GB200 pod was created or reserved.
+- After the image pull completed, staging failed before checkout or downloads:
+  `bash: line 9: python: command not found`. The image is ARM64-compatible and
+  starts successfully on the CPU node, but exposes `python3`, not `python`.
+- Deleted the failed staging pod. No model/dataset bytes were staged and no
+  preflight, training, checkpoint, or inference work ran.
+- Correct every in-container executable invocation from `python` to `python3`
+  across staging, preflight, training, inference, and resume scripts. Validate,
+  sign/push, and rerun Stage 3 before launching a fresh run name. Do not open a
+  PR.
