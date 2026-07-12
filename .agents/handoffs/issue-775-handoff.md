@@ -2974,5 +2974,7 @@ For model/pipeline changes, also check:
   `git diff --check` passed. Changed-file `pre-commit run --files` passed the
   filename hook; all language/document hooks were excluded or had no files to
   check. Focused source assertions passed.
-- No pods or project tests were launched. Commit and push are pending; no PR
-  will be opened.
+- No pods or project tests were launched and no PR was opened. Signed commit
+  `4e6219e82bf3a7fb47bbab9d38ac50c3173beb59`
+  (`[fix]: bound K8s staging launch inputs`) was verified with a good GPG
+  signature from Mac Lee and pushed to `origin/issue/775-tdm`.
