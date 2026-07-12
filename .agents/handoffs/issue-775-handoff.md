@@ -2474,3 +2474,69 @@ Under `.agents/k8s/`:
   parent Stage 3 loop must run a fresh `review-code` pass against
   `cb7edd3678158833b63ede5a4857cf09b01d13df`. No PR was opened and no GitHub
   issue or PR state was changed.
+
+
+### Final Stage 3 Review After Adjudicated K8s Fixes
+
+- Fresh review-code agent `019f554b-ae15-73e1-a059-a4315bd03ad7`
+  (`Nash`) reviewed corrected code commit `cb7edd367` (branch head
+  `8da294dc5` added only handoff state) for issue #775.
+- Reviewer reported no actionable findings and confirmed the accepted fixes for
+  global batch 4, explicit JSONL, isolated zero-step inference, serialized
+  nonfinite detection, terminal-pod recreation, completed-checkpoint recovery,
+  atomic completion markers, and legacy DCP compatibility.
+- Residual validation risks recorded by the reviewer:
+  - no real CPU staging, four-rank GB200 preflight, 500-step training, or
+    inference workflow has run on the target K8s/Lustre environment;
+  - terminal-pod recreation and interruption during a distributed save are not
+    exercised end to end;
+  - checkpoint marker ordering has focused unit coverage but not a real
+    multi-rank recovery run;
+  - inference checkpoint-tree preservation should be confirmed during the real
+    comparison run.
+- Stage 3 loop is complete. Signed/pushed commits:
+  - `a0f20d1b7`: initial corrected K8s staging/run workflow.
+  - `cb7edd367`: adjudicated run guards and checkpoint completion fixes.
+  - `49c4436fe` and `8da294dc5`: review/adjudication handoff state.
+- No K8s, Modal, training, or inference workload was launched. No PR exists;
+  the handoff remains active. Wait for explicit launch approval or explicit
+  Stage 4 draft-PR creation direction.
+
+### Updated Draft PR Message (Not Opened)
+
+Title: `[feat]: add Wan TDM distillation support`
+
+Body:
+
+```markdown
+## Summary
+
+- add Trajectory Distribution Matching to the modular trainer for Wan 2.1 T2V
+- align student, teacher, critic, validation, and flow-shift timestep semantics
+- support ODE trajectory rollout, non-terminal generator updates, LoRA student/critic training, EMA, and checkpoint resume
+- add focused unit/config/checkpoint coverage and a guarded four-GB200 convergence workflow
+
+Closes #775
+
+## Validation
+
+- Modal L40S targeted TDM tests: 23 passed
+- Modal H100 two-step TDM smoke: completed with flow shift 8, ODE sampling, finite metrics, and the expected non-terminal trajectory point
+- DGX Spark Wan-Syn true-batch smoke: completed without OOM
+- full `pre-commit run --all-files`: passed on the final corrected branch in an underscore-path validation clone
+- Kubernetes CPU-stage and GB200 manifests: accepted by server-side dry-run; no workload launched
+- independent review loop: first reviewer raised six K8s/checkpoint findings, all were accepted and fixed by a separate adjudicator; fresh reviewer reported no actionable findings
+
+## GPU Memory Impact
+
+TDM keeps student, frozen teacher, and critic roles resident. The shipped config uses full activation checkpointing and LoRA for the trainable student and critic. The guarded long-run plan uses one four-GB200 node, local batch 1 across four data-parallel ranks for global batch 4, 768 GiB host-memory request, and validation disabled during training. A real GB200 500-step convergence run remains pending explicit approval.
+
+# Checklist
+- [x] I ran pre-commit run --all-files and fixed all issues
+- [x] I added or updated tests for my changes
+- [x] I updated documentation if needed
+- [x] I considered GPU memory impact of my changes
+For model/pipeline changes, also check:
+- [ ] I verified targeted Wan T2V SSIM regression tests pass on L40S
+- [x] I updated the support matrix if adding a new model (not applicable; no new model family)
+```
