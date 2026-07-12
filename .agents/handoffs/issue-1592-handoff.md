@@ -12,8 +12,8 @@
 - Verified GitHub identity: `macthecadillac` via `gh api user --jq .login`
 - Authentication note: repository/GitHub commands require approved out-of-sandbox execution because the local filesystem sandbox fails to mount `devpts`.
 - Started: `2026-07-12T08:36:52Z`
-- Last update: `2026-07-12T09:09:55Z`
-- Current stage: Stage 2 - evidence-first Modal validation
+- Last update: `2026-07-12T09:23:13Z`
+- Current stage: Stage 2 complete - evidence supports no production change
 - Implementation begun: no
 
 ## Issue Snapshot
@@ -110,6 +110,37 @@ Pass criteria: verified device identities, captured summaries, exact comparisons
 - `2026-07-12`: The user approved the recommended evidence-first decision tree without changes.
 - The Stage 2 re-check at `2026-07-12T09:09:55Z` verified identity `macthecadillac`, issue #1592 remains open with only the automated welcome comment, no open PR references/closes #1592, and ready-for-review PR #1591 remains VSA-only. No GitHub state was modified.
 - Stage 2 begins with temporary validation-only H200 launcher support and offline W&B summary extraction. These temporary changes must be removed before selecting or committing any production fix.
+
+## Stage 2 Validation Results
+
+- Temporary validation tooling only:
+  - Added an uncommitted `H200:2` runner to the `interleavethinker` launcher.
+  - Added an uncommitted offline W&B protobuf summary reader and device/summary prints to the Vanilla test.
+  - Forced W&B offline mode only in the temporary patch; production online-W&B behavior was not changed.
+- Initial detached-job attempts `ap-u9ONgSePleacz7fyGQfJMl` (L40S) and `ap-7F40gXk5DRq1g3eXLWSdzn` (H200) were canceled before checkout completed because `--no-wait` was used without outer `modal run --detach`. This was a launcher invocation error, not a test/device failure.
+- Corrected L40S app `ap-dTd6FnWC85KR6uPFtK0MmE` / call `fc-01KXAST529VZ08JVK3RRFGYWBZ`:
+  - Two allocated GPUs both reported `NVIDIA L40S`.
+  - Result: `1 passed, 1 warning in 119.90s`.
+  - Fresh summary: `avg_step_time=2.934632917800002`, `grad_norm=0.1174667701125145`, `step_time=2.5957786740000017`, `train_loss=0.1382552981376648`.
+  - Own L40S-reference diffs: `0.45919419781213255`, `0.0016373544931411743`, `0.3382597604031332`, `0.000019259750843048096`; all pass.
+  - H200-reference diffs: `1.6751834678733872`, `0.053081467747688293`, `1.4245883413786657`, `0.0000613480806350708`; all pass.
+- Corrected H200 app `ap-ui8b9NJk54ZLD7D5KbIPeK` / call `fc-01KXASV0YXWZPGXK7N07F9PN1R`:
+  - Two allocated GPUs both reported `NVIDIA H200`.
+  - Result: `1 passed, 1 warning in 135.72s`.
+  - Fresh summary: `avg_step_time=2.0122275741999998`, `grad_norm=0.11806415766477585`, `step_time=1.1265543279999974`, `train_loss=0.1382402777671814`.
+  - Own H200-reference diffs: `0.7527781242733851`, `0.053678855299949646`, `0.04463600462133854`, `0.00007636845111846924`; all pass.
+  - L40S-reference diffs: `0.4632111457878696`, `0.002234742045402527`, `1.1309645855968711`, `0.000004239380359649658`; all pass.
+- Fresh L40S-versus-H200 diffs: `avg_step_time=0.9224053436000022`, `grad_norm=0.0005973875522613525`, `step_time=1.4692243460000043`, `train_loss=0.000015020370483398438`; all are comfortably within existing thresholds.
+- Neither result was failing or near a threshold, so the approved plan did not require a repeat run.
+- The temporary launcher and test changes were reversed exactly via their git diff. `/tmp/fastvideo-worktrees/interleavethinker-launcher` is clean and no temporary validation code is present in the issue branch.
+
+## Evidence-Selected Outcome
+
+- Keep the existing L40S/H200 multi-reference behavior unchanged. Both references remain valid under the regression's thresholds, and each fresh run passes against either reference.
+- Do not refresh the H200 baseline from one run: it passes, and rebaselining would add churn without fixing a reproduced failure.
+- Do not pin the production lane: recent CI history shows no device-dependent Vanilla flake, the explicit L40S diagnostic allocated L40S, and strict L40S syntax remains undocumented.
+- Do not collapse references in this issue: although currently redundant under the broad thresholds, retaining manual device-specific evidence is harmless and avoids an unrelated cleanup.
+- Production files changed: none. No code commit, Stage 3 code review, pre-commit run, or draft PR is warranted for a no-change investigation outcome.
 
 ## Compatibility, Performance, And Documentation
 
