@@ -2677,3 +2677,70 @@ For model/pipeline changes, also check:
 - Pushed commit `23445a03c` to `origin/issue/775-tdm`; the remote advanced
   from `a2bab8a66` to `23445a03c`.
 - No PR was opened and no GitHub issue or PR state was modified.
+
+
+## 2026-07-12 Independent Official-Objective Adjudication In Progress
+
+- User requested independent adjudication of three findings against issue #775,
+  official Luo-Yihong/TDM commit
+  `81b019f91539948d49da86cef12ccc64030c5022`, and FastVideo commit
+  `61d489cbd5f41881bdfb58e3c29967acdc6e51b9`.
+- Isolated worktree: `/tmp/fastvideo-adjudicator-775-objective-schedule` on
+  temporary branch `adjudicator/775-objective-schedule-61d489c`; reviewed
+  local and remote `issue/775-tdm` both pointed to `61d489cbd` at start.
+- Verified `gh` identity `macthecadillac`. Issue remains open and assigned
+  to `macthecadillac`; its two comments contain no proposed implementation;
+  no open PR targets issue 775 or TDM.
+- Accepted all three findings:
+  1. Official generator lines 1161-1176 transition the gradient-bearing source
+     x0 to a distinct target timestep and evaluate teacher/fake score there;
+     FastVideo evaluated all roles at the source state.
+  2. Raw shift-8 step 750 maps to sigma 0.96 for corruption, while passing
+     label 750 to `ModelBase.predict_x0` resolves the scheduler entry near
+     sigma 0.75. Model calls must use scheduler labels resolved from the
+     authoritative trajectory sigma.
+  3. Official fake-score training is unconditional x0 MSE (line 1130), while
+     optional generator pseudo-Huber is
+     `sqrt(error^2 + c^2) - c` (lines 1179-1183). The shared FastVideo helper
+     incorrectly changed both objectives and used `F.huber_loss`.
+- Implementation in progress: generator now samples a source/target context,
+  rebuilds the target-noised latent from the recomputed source x0, evaluates
+  teacher/critic at the target, resolves every role model label from the
+  authoritative sigma, keeps fake-score MSE unconditional, and isolates the
+  reference generator pseudo-Huber. Focused regressions cover target routing,
+  a real shift-8 scheduler through `ModelBase.predict_x0`, and generator-only
+  pseudo-Huber behavior. Durable docs now describe `use_huber` accurately.
+- The repository `apply_patch` helper failed before editing because its
+  internal bwrap could not mount devpts. Scoped Node rewrites were used after
+  confirming failed patch attempts had left the worktree clean.
+- Next: inspect/format diff, run Modal targeted tests and pre-commit under the
+  repository launcher, refresh GitHub, update this handoff, sign/commit, and
+  push `HEAD:issue/775-tdm`. No PR will be opened.
+
+- Validation results:
+  - Local non-test checks: `git diff --check` and `python3 -m py_compile`
+    passed; no local project tests were run.
+  - First Modal L40S app `ap-IAPTjmthcunfNJTWjxYs5F` ran the focused
+    TDM/config suite and reported 19 passed, 1 failed. The real scheduler test
+    exposed a genuine raw/scheduler-label collision: raw step 250 is also an
+    exact shift-8 scheduler label for sigma 0.25, while raw 250 means shifted
+    sigma about 0.7273. Added an explicit `scheduler_space` contract to
+    `_timestep_to_sigma`; raw configuration steps no longer infer their space
+    from numeric equality, and warped steps request scheduler-space lookup.
+  - Modal L40S app `ap-YpmkvT81RJZzKj7odqytmp` reran
+    `pytest tests/local_tests/tdm/test_tdm_method_unit.py
+    fastvideo/tests/train/methods/test_tdm_config_path.py -q`: 20 passed,
+    14 warnings in 2.30s.
+  - Local changed-file pre-commit passed yapf, ruff, codespell, PyMarkdown,
+    filename, and suggestion hooks; mypy could not start because the isolated
+    hyphenated worktree name is not a valid Python package name.
+  - Modal L40S app `ap-YOhDPef5x8T42MqNKt5DOz` ran the same changed-file
+    `pre-commit run --files ...` from `/FastVideo`; all hooks passed,
+    including mypy.
+- Final pending actions: refresh issue/comments/open PRs and remote branch,
+  sign and commit implementation/tests/docs/handoff, verify signature, and
+  push `HEAD:issue/775-tdm` immediately. No PR will be opened.
+- Final GitHub refresh: `gh` identity remained `macthecadillac`; issue
+  #775 stayed open and assigned with unchanged comments; targeted open PR
+  search returned `[]`; remote `issue/775-tdm` still pointed to reviewed
+  baseline `61d489cbd5f41881bdfb58e3c29967acdc6e51b9`.

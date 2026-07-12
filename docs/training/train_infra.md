@@ -355,7 +355,7 @@ method:
 | `snr_clip` | `5.0` | Clip the flow-SNR fake-score weight |
 | `importance_weight_clip` | `10.0` | Clip mixed-noise importance weights |
 | `normalize_generator_delta` | `true` | Normalize real-vs-fake generator target delta |
-| `use_huber` | `false` | Use Huber loss instead of MSE for TDM losses |
+| `use_huber` | `false` | Use the reference pseudo-Huber expression for the generator loss; fake-score training remains MSE |
 | `huber_c` | `0.001` | Huber delta when `use_huber=true` |
 
 See `examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml` for a

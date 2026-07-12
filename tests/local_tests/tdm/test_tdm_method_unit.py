@@ -10,6 +10,7 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from fastvideo.models.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from fastvideo.pipelines.pipeline_batch_info import TrainingBatch
 from fastvideo.train.methods.distribution_matching.tdm import TDMMethod
 from fastvideo.train.models.base import ModelBase
@@ -116,6 +117,7 @@ class _TinyRoleModel(ModelBase):
         self.noise_scheduler = _FakeFlowScheduler()
         self.backward_calls = 0
         self.predict_calls: list[tuple[bool, str, float, bool]] = []
+        self.predict_inputs: list[torch.Tensor] = []
 
     @property
     def device(self) -> torch.device:
@@ -169,6 +171,7 @@ class _TinyRoleModel(ModelBase):
             timestep_value,
             torch.is_grad_enabled(),
         ))
+        self.predict_inputs.append(noisy_latents.detach().clone())
         scale = self.transformer.weight.reshape(())
         offset = {
             ("student", True): 0.05,
@@ -251,12 +254,19 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
     assert metrics["update_student"] == 1.0
     generator_timestep = float(torch.as_tensor(metrics["tdm/generator/timestep"]).item())
     generator_sigma = float(torch.as_tensor(metrics["tdm/generator/sigma"]).item())
-    assert generator_timestep in {750.0, 500.0}
-    assert generator_sigma in {0.75, 0.5}
+    target_timestep = float(torch.as_tensor(metrics["tdm/generator/target_timestep"]).item())
+    target_sigma = float(torch.as_tensor(metrics["tdm/generator/target_sigma"]).item())
+    assert generator_timestep in {500.0, 250.0}
+    assert generator_sigma in {0.5, 0.25}
+    assert target_timestep in {750.0, 500.0}
+    assert target_sigma in {0.75, 0.5}
+    assert target_timestep > generator_timestep
+    assert target_sigma > generator_sigma
     assert "tdm/generator/raw_delta_abs_mean" in metrics
     assert "tdm/generator/target_delta_abs_mean" in metrics
     assert "tdm/generator/normalization_denom" in metrics
-    assert metrics["tdm/generator/trajectory_index"] in {1.0, 2.0}
+    assert metrics["tdm/generator/trajectory_index"] in {2.0, 3.0}
+    assert metrics["tdm/generator/target_trajectory_index"] in {1.0, 2.0}
     assert metrics["tdm/generator/normalize_delta"] == 1.0
     assert "tdm/fake_score/sigma_from" in metrics
     assert "tdm/fake_score/sigma_to" in metrics
@@ -276,26 +286,37 @@ def test_tdm_single_train_step_reports_losses_and_routes_backward() -> None:
         if call[0] is True and call[1] == "vsa" and call[3] is True
     ]
     assert len(grad_student_calls) == 1
-    assert grad_student_calls[0][2] in {750.0, 500.0}
+    assert grad_student_calls[0][2] in {500.0, 250.0}
 
 
-def test_tdm_generator_loss_samples_separate_mode_target_step_list() -> None:
-    method, _, _ = _build_method()
-    valid_steps = {750, 500}
+def test_tdm_generator_scores_target_noised_latent_at_distinct_timestep() -> None:
+    method, student, critic = _build_method(method_overrides={"use_randmid": False})
+    teacher = method.teacher
+    batch = student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    trajectory = method._student_trajectory(batch)
+    student.predict_calls.clear()
+    student.predict_inputs.clear()
+    critic.predict_calls.clear()
+    critic.predict_inputs.clear()
+    teacher.predict_calls.clear()
+    teacher.predict_inputs.clear()
 
-    for _ in range(16):
-        timestep = method._sample_training_timestep(torch.device("cpu"))
+    _, metrics = method._tdm_generator_loss(trajectory, batch)
 
-        assert int(timestep.item()) in valid_steps
-
-
-def test_tdm_generator_loss_samples_highest_non_terminal_step_in_terminal_mode() -> None:
-    method, _, _ = _build_method(method_overrides={"noise_interval_mode": "to_terminal"})
-
-    for _ in range(16):
-        timestep = method._sample_training_timestep(torch.device("cpu"))
-
-        assert int(timestep.item()) == 750
+    source_timestep = float(torch.as_tensor(metrics["tdm/generator/timestep"]).item())
+    target_timestep = float(torch.as_tensor(metrics["tdm/generator/target_timestep"]).item())
+    source_index = int(float(metrics["tdm/generator/trajectory_index"]))
+    assert source_timestep != target_timestep
+    assert target_timestep > source_timestep
+    assert student.predict_calls == [(True, "vsa", source_timestep, True)]
+    assert [call[:3] for call in critic.predict_calls] == [(True, "dense", target_timestep)]
+    assert [call[:3] for call in teacher.predict_calls] == [
+        (True, "dense", target_timestep),
+        (False, "dense", target_timestep),
+    ]
+    assert_close(critic.predict_inputs[0], teacher.predict_inputs[0])
+    assert_close(critic.predict_inputs[0], teacher.predict_inputs[1])
+    assert not torch.allclose(critic.predict_inputs[0], trajectory.noisy_latents[source_index])
 
 
 def test_tdm_sigma_lookup_treats_explicit_steps_as_raw_wan_timesteps() -> None:
@@ -313,12 +334,45 @@ def test_tdm_sigma_lookup_treats_explicit_steps_as_raw_wan_timesteps() -> None:
     assert_close(sigmas, expected)
 
 
+def test_tdm_real_shifted_scheduler_aligns_noising_model_labels_and_x0_conversion() -> None:
+    method, student, critic = _build_method(method_overrides={"student_sample_type": "ode"})
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=8.0)
+    student.noise_scheduler = scheduler
+    critic.noise_scheduler = FlowMatchEulerDiscreteScheduler(shift=8.0)
+    method.teacher.noise_scheduler = FlowMatchEulerDiscreteScheduler(shift=8.0)
+    batch = student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+
+    trajectory = method._student_trajectory(batch)
+
+    expected_sigmas = method._timestep_to_sigma(torch.tensor([1000, 750, 500, 250]))
+    model_labels = torch.tensor([call[2] for call in student.predict_calls])
+    resolved_sigmas = scheduler.sigmas[
+        torch.argmin((scheduler.timesteps.unsqueeze(0) - model_labels.unsqueeze(1)).abs(), dim=1)
+    ]
+    assert_close(trajectory.sigmas, expected_sigmas)
+    assert_close(resolved_sigmas, expected_sigmas)
+    assert model_labels[1].item() > 900.0
+
+    for noisy, clean, sigma in zip(trajectory.noisy_latents, trajectory.clean_latents, trajectory.sigmas):
+        predicted_flow = noisy * student.transformer.weight.reshape(()) + 0.05
+        assert_close(clean, noisy - sigma * predicted_flow)
+
+    for index in range(len(trajectory.noisy_latents) - 1):
+        noisy = trajectory.noisy_latents[index]
+        clean = trajectory.clean_latents[index]
+        sigma = trajectory.sigmas[index]
+        next_sigma = trajectory.sigmas[index + 1]
+        eps = (noisy - (1.0 - sigma) * clean) / sigma
+        expected_next = (1.0 - next_sigma) * clean + next_sigma * eps
+        assert_close(trajectory.noisy_latents[index + 1], expected_next)
+
+
 def test_tdm_warped_denoising_steps_use_scheduler_sigmas_without_double_shift() -> None:
     method, student, _ = _build_method(method_overrides={"warp_denoising_step": True})
     student.noise_scheduler = _DenseShiftedFlowScheduler()
 
     steps = method._get_denoising_step_list(torch.device("cpu"))
-    sigmas = method._timestep_to_sigma(steps)
+    sigmas = method._timestep_to_sigma(steps, scheduler_space=True)
     step_indices = torch.tensor([0, 250, 500, 750])
     expected_steps = student.noise_scheduler.timesteps[step_indices]
     expected_sigmas = student.noise_scheduler.sigmas[step_indices]
@@ -444,3 +498,24 @@ def test_tdm_to_terminal_fake_score_loss_trains_critic() -> None:
     grad = critic.transformer.weight.grad
     assert grad is not None
     assert float(grad.abs().item()) > 0.0
+
+
+def test_tdm_use_huber_is_generator_only_and_matches_reference_pseudo_huber() -> None:
+    mse_method, _, _ = _build_method(method_overrides={"use_huber": False})
+    huber_method, _, _ = _build_method(method_overrides={"use_huber": True, "huber_c": 0.25})
+    pred = torch.tensor([0.0, 2.0])
+    target = torch.tensor([1.0, 0.0])
+
+    expected = torch.sqrt((pred - target).square() + 0.25**2) - 0.25
+    assert_close(huber_method._generator_elementwise_loss(pred, target), expected)
+    assert_close(mse_method._generator_elementwise_loss(pred, target), (pred - target).square())
+
+    mse_method.cuda_generator.manual_seed(321)
+    huber_method.cuda_generator.manual_seed(321)
+    mse_batch = mse_method.student.prepare_batch({}, generator=mse_method.cuda_generator, latents_source="zeros")
+    huber_batch = huber_method.student.prepare_batch({}, generator=huber_method.cuda_generator, latents_source="zeros")
+    mse_method.cuda_generator.manual_seed(654)
+    huber_method.cuda_generator.manual_seed(654)
+    mse_loss, _, _, _ = mse_method._tdm_fake_score_loss(mse_batch)
+    huber_loss, _, _, _ = huber_method._tdm_fake_score_loss(huber_batch)
+    assert_close(huber_loss, mse_loss)

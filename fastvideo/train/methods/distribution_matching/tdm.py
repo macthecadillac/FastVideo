@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any, Literal, TYPE_CHECKING
 
 import torch
-import torch.nn.functional as F
 
 from fastvideo.train.methods.base import LogScalar
 from fastvideo.train.methods.distribution_matching.dmd2 import DMD2Method
@@ -344,7 +343,7 @@ class TDMMethod(DMD2Method):
                 raise ValueError("method.tdm_denoising_steps contains values outside the scheduler training range")
             steps = timesteps[step_indices]
 
-        sigmas = self._timestep_to_sigma(steps)
+        sigmas = self._timestep_to_sigma(steps, scheduler_space=bool(warp))
         scheduler_sigmas = self.student.noise_scheduler.sigmas.to(device=device, dtype=torch.float32)
         terminal_sigma = scheduler_sigmas.max()
         if not bool(torch.isclose(
@@ -361,7 +360,12 @@ class TDMMethod(DMD2Method):
         self._denoising_step_list = steps
         return steps
 
-    def _timestep_to_sigma(self, timestep: torch.Tensor) -> torch.Tensor:
+    def _timestep_to_sigma(
+        self,
+        timestep: torch.Tensor,
+        *,
+        scheduler_space: bool = False,
+    ) -> torch.Tensor:
         scheduler = self.student.noise_scheduler
         t = timestep.to(device=timestep.device, dtype=torch.float32)
         if t.ndim == 0:
@@ -380,14 +384,11 @@ class TDMMethod(DMD2Method):
         )
         sigmas = scheduler.sigmas.to(device=timestep.device, dtype=torch.float32)
         timesteps = scheduler.timesteps.to(device=timestep.device, dtype=torch.float32)
-        exact_matches = torch.isclose(
-            timesteps.unsqueeze(0),
-            t.unsqueeze(1),
-            rtol=0.0,
-            atol=1e-5,
-        )
-        if bool(exact_matches.any(dim=1).all().item()):
-            idx = torch.argmax(exact_matches.to(torch.long), dim=1)
+        if scheduler_space:
+            idx = torch.argmin(
+                (timesteps.unsqueeze(0) - t.unsqueeze(1)).abs(),
+                dim=1,
+            )
             return sigmas[idx]
 
         has_static_flow_schedule = (shift is not None and num_train_timesteps is not None
@@ -409,34 +410,29 @@ class TDMMethod(DMD2Method):
         )
         return sigmas[idx]
 
-    def _get_generator_score_step_list(
+    def _model_timestep_for_sigma(
         self,
-        device: torch.device,
+        sigma: torch.Tensor,
+        model: ModelBase,
     ) -> torch.Tensor:
-        step_list = self._get_denoising_step_list(device)
-        sigmas = self._timestep_to_sigma(step_list)
-        interval_eps = 1e-6
-        max_sigma = sigmas.max()
-
-        if self._noise_interval_mode == "to_terminal":
-            target_idx = self._highest_non_terminal_target_index(
-                sigmas,
-                where="TDM generator score to_terminal mode",
-            )
-            return step_list[target_idx].reshape(1)
-        else:
-            source_sigmas = sigmas.reshape(-1, 1)
-            target_sigmas = sigmas.reshape(1, -1)
-            non_terminal_targets = sigmas < max_sigma - interval_eps
-            has_source = (target_sigmas > source_sigmas + interval_eps).any(dim=0)
-            eligible = torch.nonzero(
-                has_source & non_terminal_targets,
-                as_tuple=False,
-            ).flatten()
-
-        if eligible.numel() == 0:
-            raise ValueError("TDM generator score requires at least one valid separate-mode target timestep")
-        return step_list[eligible]
+        """Resolve an authoritative flow sigma to a model scheduler label."""
+        scheduler = model.noise_scheduler
+        model_timesteps = scheduler.timesteps.to(device=sigma.device, dtype=torch.float32)
+        model_sigmas = scheduler.sigmas[:model_timesteps.numel()].to(device=sigma.device, dtype=torch.float32)
+        flat_sigma = sigma.to(dtype=torch.float32).reshape(-1)
+        indices = torch.argmin(
+            (model_sigmas.unsqueeze(0) - flat_sigma.unsqueeze(1)).abs(),
+            dim=1,
+        )
+        resolved_sigmas = model_sigmas[indices]
+        if not bool(torch.allclose(
+                resolved_sigmas,
+                flat_sigma,
+                rtol=1e-5,
+                atol=1e-6,
+        )):
+            raise ValueError("TDM role scheduler does not contain the requested trajectory sigma")
+        return model_timesteps[indices].reshape(sigma.shape)
 
     def _highest_non_terminal_target_index(
         self,
@@ -488,10 +484,12 @@ class TDMMethod(DMD2Method):
 
         for step_idx, timestep_scalar in enumerate(step_list):
             timestep = timestep_scalar.reshape(1)
+            sigma = self._timestep_to_sigma(timestep)
+            model_timestep = self._model_timestep_for_sigma(sigma, self.student)
             with torch.no_grad():
                 pred_x0 = self.student.predict_x0(
                     current_noisy,
-                    timestep,
+                    model_timestep,
                     batch,
                     conditional=True,
                     cfg_uncond=self._cfg_uncond,
@@ -500,7 +498,7 @@ class TDMMethod(DMD2Method):
 
             noisy_latents.append(current_noisy)
             clean_latents.append(pred_x0)
-            sigmas.append(self._timestep_to_sigma(timestep)[0])
+            sigmas.append(sigma[0])
 
             if step_idx + 1 >= len(step_list):
                 break
@@ -657,15 +655,16 @@ class TDMMethod(DMD2Method):
             trajectory = self._student_trajectory(batch)
             context = self._sample_tdm_context(trajectory)
 
+        critic_timestep = self._model_timestep_for_sigma(context.sigma_to, self.critic)
         fake_x0 = self.critic.predict_x0(
             context.noisy_to,
-            context.timestep_to,
+            critic_timestep,
             batch,
             conditional=True,
             cfg_uncond=self._cfg_uncond,
             attn_kind="dense",
         )
-        elementwise = self._elementwise_loss(fake_x0, context.clean_latents)
+        elementwise = (fake_x0.float() - context.clean_latents.float()).square()
         per_sample = _mean_except_batch(elementwise)
         weight_components = self._tdm_fake_score_weight_components(context)
         weights = weight_components["weights"].to(device=per_sample.device, dtype=per_sample.dtype)
@@ -763,31 +762,6 @@ class TDMMethod(DMD2Method):
             "tdm/fake_score/transition_beta_mean": context.transition_beta.detach().float().mean(),
         }
 
-    def _sample_training_timestep(self, device: torch.device) -> torch.Tensor:
-        step_list = self._get_generator_score_step_list(device)
-        index = torch.randint(
-            0,
-            len(step_list),
-            [1],
-            device=device,
-            dtype=torch.long,
-            generator=self.cuda_generator,
-        )
-        return step_list[index].reshape(1)
-
-    def _sample_generator_trajectory_index(
-        self,
-        trajectory: TDMTrajectory,
-    ) -> int:
-        timestep = self._sample_training_timestep(trajectory.timesteps.device)
-        matches = torch.nonzero(
-            trajectory.timesteps == timestep.reshape(()),
-            as_tuple=False,
-        ).flatten()
-        if matches.numel() == 0:
-            raise RuntimeError("Sampled generator timestep is not present in the TDM trajectory")
-        return int(matches[0].item())
-
     def _tdm_generator_loss(
         self,
         trajectory: TDMTrajectory,
@@ -801,13 +775,14 @@ class TDMMethod(DMD2Method):
         if guidance_scale is None:
             guidance_scale = 1.0
 
-        trajectory_index = self._sample_generator_trajectory_index(trajectory)
-        timestep = trajectory.timesteps[trajectory_index].reshape(1)
-        noisy_latents = trajectory.noisy_latents[trajectory_index].detach()
+        context = self._sample_tdm_context(trajectory)
+        source_timestep = context.timestep_from
+        target_timestep = context.timestep_to
+        student_timestep = self._model_timestep_for_sigma(context.sigma_from, self.student)
 
         generator_pred_x0 = self.student.predict_x0(
-            noisy_latents,
-            timestep,
+            context.noisy_from,
+            student_timestep,
             batch,
             conditional=True,
             cfg_uncond=self._cfg_uncond,
@@ -816,25 +791,42 @@ class TDMMethod(DMD2Method):
         device = generator_pred_x0.device
 
         with torch.no_grad():
+            eps_from = flow_effective_noise(
+                context.noisy_from,
+                generator_pred_x0.detach(),
+                context.sigma_from,
+                eps=self._sigma_eps,
+            )
+            target_noisy_latents, _, _ = flow_transition_to_noisier_sigma(
+                noisy_from=context.noisy_from,
+                clean_latents=generator_pred_x0.detach(),
+                eps_from=eps_from,
+                sigma_from=context.sigma_from,
+                sigma_to=context.sigma_to,
+                proposal_noise=context.proposal_noise,
+                eps=self._sigma_eps,
+            )
+            critic_timestep = self._model_timestep_for_sigma(context.sigma_to, self.critic)
+            teacher_timestep = self._model_timestep_for_sigma(context.sigma_to, self.teacher)
             faker_x0 = self.critic.predict_x0(
-                noisy_latents,
-                timestep,
+                target_noisy_latents,
+                critic_timestep,
                 batch,
                 conditional=True,
                 cfg_uncond=self._cfg_uncond,
                 attn_kind="dense",
             )
             real_cond_x0 = self.teacher.predict_x0(
-                noisy_latents,
-                timestep,
+                target_noisy_latents,
+                teacher_timestep,
                 batch,
                 conditional=True,
                 cfg_uncond=self._cfg_uncond,
                 attn_kind="dense",
             )
             real_uncond_x0 = self.teacher.predict_x0(
-                noisy_latents,
-                timestep,
+                target_noisy_latents,
+                teacher_timestep,
                 batch,
                 conditional=False,
                 cfg_uncond=self._cfg_uncond,
@@ -849,35 +841,33 @@ class TDMMethod(DMD2Method):
                 delta = delta / denom.clamp_min(self._sigma_eps)
             target_delta = torch.nan_to_num(delta)
             target = generator_pred_x0.detach() + target_delta
-            sigma = self._timestep_to_sigma(timestep)
 
-        loss = self._elementwise_loss(generator_pred_x0, target)
+        loss = self._generator_elementwise_loss(generator_pred_x0, target)
         batch.dmd_latent_vis_dict.update({
-            "dmd_timestep": timestep.float().detach(),
-            "generator_timestep": timestep.float().detach(),
+            "dmd_timestep": target_timestep.float().detach(),
+            "generator_timestep": source_timestep.float().detach(),
             "generator_pred_video": generator_pred_x0.detach(),
         })
         metrics: dict[str, LogScalar] = {
-            "tdm/generator/trajectory_index": float(trajectory_index),
-            "tdm/generator/timestep": timestep.detach().float().mean(),
-            "tdm/generator/sigma": sigma.detach().float().mean(),
+            "tdm/generator/trajectory_index": float(context.trajectory_index),
+            "tdm/generator/target_trajectory_index": float(context.target_trajectory_index),
+            "tdm/generator/timestep": source_timestep.detach().float().mean(),
+            "tdm/generator/target_timestep": target_timestep.detach().float().mean(),
+            "tdm/generator/sigma": context.sigma_from.detach().float().mean(),
+            "tdm/generator/target_sigma": context.sigma_to.detach().float().mean(),
             "tdm/generator/raw_delta_abs_mean": raw_delta_abs_mean,
             "tdm/generator/target_delta_abs_mean": target_delta.detach().float().abs().mean(),
             "tdm/generator/normalization_denom": denom.detach().float(),
             "tdm/generator/normalize_delta": float(self._normalize_generator_delta),
         }
-        return 0.5 * loss.mean(), metrics
+        return loss.mean(), metrics
 
-    def _elementwise_loss(
+    def _generator_elementwise_loss(
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
     ) -> torch.Tensor:
+        error = pred.float() - target.float()
         if self._use_huber:
-            return F.huber_loss(
-                pred.float(),
-                target.float(),
-                delta=self._huber_c,
-                reduction="none",
-            )
-        return (pred.float() - target.float()).square()
+            return torch.sqrt(error.square() + self._huber_c**2) - self._huber_c
+        return error.square()
