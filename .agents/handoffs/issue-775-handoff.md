@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-11 K8s bsz=4 500-step run prep staged
+Last updated: 2026-07-12 branch cleanup and resume on issue/775-tdm
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -2117,7 +2117,7 @@ Under `.agents/k8s/`:
 
 ### Launch plan (not yet executed)
 
-1. From the worktree `/tmp/fastvideo-worktrees/issue-775-tdm-k8s`:
+1. From the worktree `/tmp/fastvideo-worktrees/issue-775-tdm`:
    `KUBECONFIG=/home/toolbox/.kube/config K8S_NAMESPACE=vllm \
         RUN_NAME=tdm_bsz4_500_k8s_<timestamp> \
         bash .agents/k8s/run_k8s.sh`
@@ -2158,10 +2158,10 @@ Under `.agents/k8s/`:
 ### Known unknowns
 
 - The handoff for issue #775 has a final code commit of
-  `5c2a8b9b` and a final handoff commit of `a990855eb`. The K8s
-  driver checks out the latter by default. The user may want to
-  re-train from an even more recent commit if they want; the env
-  var `COMMIT` is overridable.
+  `5c2a8b9b` and later handoff/K8s prep commits on `issue/775-tdm`.
+  The K8s driver checks out its pinned commit by default. The user
+  may want to re-train from an even more recent commit if they want;
+  the env var `COMMIT` is overridable.
 - The post-training `run_infer.sh` reuses the training entrypoint
   with `every_steps=1` to force one validation pass. This worked on
   DGX. If it does not work on K8s, fallback is a standalone
@@ -2183,4 +2183,29 @@ Under `.agents/k8s/`:
 
 - Wait for user confirmation on the prep.
 - After user approves, run the launch driver from
-  `/tmp/fastvideo-worktrees/issue-775-tdm-k8s`.
+  `/tmp/fastvideo-worktrees/issue-775-tdm`.
+
+## 2026-07-12 Branch Cleanup And Resume
+
+- User clarified that `issue/775-tdm` is the issue #775 branch to follow and
+  explicitly asked to delete `issue/775-tdm-k8s-resize`.
+- Verified `gh` identity as `macthecadillac`.
+- Pruned stale `/tmp` worktree metadata, deleted the local branch
+  `issue/775-tdm-k8s-resize`, deleted the matching remote ref from
+  `macthecadillac/FastVideo` via `gh api`, and ran `git fetch --prune origin`.
+  Final branch check showed only `issue/775-tdm` and
+  `origin/issue/775-tdm` for issue 775.
+- Recreated the active worktree at
+  `/tmp/fastvideo-worktrees/issue-775-tdm`, fast-forwarded it to
+  `origin/issue/775-tdm` at `a1ebabf5c`, and read this handoff.
+- Refreshed GitHub issue state: issue #775 remains open, assigned to
+  `macthecadillac`, with the same two comments (`zhisbug` maintainer interest
+  and stale-bot). Labels remain `good first issue`, `contribution-needed`,
+  `stale`, and `keep-open`.
+- Refreshed related open PR state with targeted search `775 OR TDM`; result
+  was `[]`. No PR exists for this branch and no PR draft status was changed.
+- Current resume state is unchanged: Stage 3 is complete and Stage 4 has not
+  started. Wait for user direction before opening any draft PR. If the user
+  approves the K8s batch-4 run prep, run it from
+  `/tmp/fastvideo-worktrees/issue-775-tdm`.
+
