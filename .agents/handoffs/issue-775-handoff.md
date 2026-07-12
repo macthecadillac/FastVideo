@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-12 branch cleanup and resume on issue/775-tdm
+Last updated: 2026-07-12 final review handoff correction on issue/775-tdm
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -3035,9 +3035,9 @@ For model/pipeline changes, also check:
   - `RECOVER_DEAD_TRAINING=1` opts into one recovery from the latest completed
     checkpoint when a sleeping pod outlives failed training;
   - sequential trackers create and route backend-specific video artifacts.
-- Next: sign/commit/push the eight-file patch, run full pre-commit and
-  Kubernetes server-side dry-runs on the exact head, then launch the approved
-  CPU staging plan. Do not open a PR.
+- The eight-file patch was subsequently GPG-signed, committed, and pushed as
+  `b0e7d9d066bf3eee8cca7ad4ef07ae45c0ad43cc`
+  `[fix]: harden issue 775 recovery and tracker artifacts`.
 
 - Final candidate validation before signing:
   - full `uvx pre-commit run --all-files` passed, including mypy, after the
@@ -3046,7 +3046,11 @@ For model/pipeline changes, also check:
   - Kubernetes server-side dry-run accepted both rendered CPU staging and
     four-GB200 manifests;
   - no pod was created by these dry-runs.
-- GPG signing is temporarily blocked by the hardware-backed signing agent
-  returning `Operation cancelled`. No unsigned commit was created. Retry only
-  after hardware authorization; launch remains blocked because it must pin a
-  signed exact commit.
+- `git log -1 --show-signature` verified a good signature from
+  `Mac Lee <macthecadillac@gmail.com>` using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887`. Local `HEAD` and
+  `origin/issue/775-tdm` both resolved to the exact commit above after push.
+- Final review of that exact head reported one actionable finding only: this
+  handoff still described signing as blocked and the commit as nonexistent.
+  The finding was accepted and corrected in a handoff-only follow-up; no code,
+  tests, launch scripts, or runtime behavior changed. No pod or PR was opened.
