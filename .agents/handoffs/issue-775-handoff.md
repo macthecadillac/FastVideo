@@ -2564,3 +2564,19 @@ For model/pipeline changes, also check:
   empty. No staging, GPU, training, or inference workload has launched yet.
 - Because this is a code change after Stage 2, commit/sign/push and rerun the
   full Stage 3 review cycle before relaunch. Do not open a PR.
+
+
+### Fresh Stage 3 Review For Launcher-Root Fix
+
+- Signed/pushed fix commit `312400b1f` corrected both workstation drivers from
+  `.agents/k8s/../../..` to `.agents/k8s/../..`.
+- Full `uvx pre-commit run --all-files` passed on exact commit `312400b1f` in
+  the clean underscore-path validation clone, including mypy.
+- Fresh review-code agent `019f555c-af1d-7af2-b072-2945441f25af` (`Hume`)
+  reported no actionable findings. It confirmed repository-root resolution,
+  manifest/template paths, output/manifests paths, pod-side repo paths, and
+  artifact download paths are consistent.
+- Residual review gap is runtime only: corrected launch and resume have not yet
+  been exercised end to end. User already approved running the test plan.
+- Stage 3 is complete again. Relaunch with a new run name after this handoff
+  update is signed/pushed. Do not open a PR.
