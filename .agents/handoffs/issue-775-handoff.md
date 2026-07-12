@@ -2943,4 +2943,8 @@ For model/pipeline changes, also check:
 - Modal L40S app `ap-vhX5623F3bqTS3x7MvDT4H` ran
   `pytest fastvideo/tests/train/utils/test_checkpoint.py -q` with the local
   code/test patch: `35 passed, 14 warnings in 2.26s`. `git diff --check`
-  passed. Signed commit and push are pending.
+  passed.
+- Signed commit `50dfaaa38a9695a65c53e7a5694759d870520b21`
+  (`[fix]: avoid duplicate final checkpoint save`) has a verified good GPG
+  signature from Mac Lee and was pushed to `origin/issue/775-tdm`. No PR was
+  opened.
