@@ -2225,7 +2225,7 @@ Under `.agents/k8s/`:
   to namespace `vllm`, and authenticates as `vlm-mal004`.
 - Live capacity snapshot:
   - 33 Ready `BM.GPU.GB200.4` nodes, each with 4 NVIDIA GB200 GPUs, 144 CPU,
-    about 980 GiB allocatable memory, and about 892 GiB allocatable ephemeral
+    about 957 GiB allocatable memory, and about 892 GiB allocatable ephemeral
     storage.
   - 31 are schedulable; two (`10.0.132.28`, `10.0.134.85`) are cordoned and
     expose zero allocatable GPUs.
