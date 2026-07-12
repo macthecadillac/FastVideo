@@ -1,172 +1,170 @@
 #!/usr/bin/env bash
-# Launch the issue-775 TDM training job on the
-# oci-bth-aiaccelerator-prd005 Kubernetes cluster.
-#
-# This is the launch-time driver. It:
-#   1. Renders and applies the pod manifest.
-#   2. Waits for the pod to start, then for the init container to start
-#      its dataset download.
-#   3. Polls the HF cache size every 20s for up to 90s to estimate the
-#      Wan-Syn dataset download rate. Reports the estimated total init
-#      time and projected wall-clock for the 500 training steps.
-#   4. Once the init container finishes, exec's the training script
-#      inside the pod under `nohup ... &` so it survives the
-#      kubectl exec returning. The training process's PID is written
-#      to ${POD_OUTPUT_ROOT}/output/train.pid.
-#   5. Confirms the training process is alive, prints a clear
-#      "you can disconnect" banner with the pod name, run name, and
-#      reconnect instructions, and exits.
-#
-# This script does NOT wait for training to complete. Use
-# resume_k8s.sh in a later session to monitor, run inference, and
-# download artifacts.
-#
-# Usage:
-#   KUBECONFIG=/home/toolbox/.kube/config \
-#   K8S_NAMESPACE=vllm \
-#   RUN_NAME=tdm_bsz4_500_k8s_$(date +%s) \
-#       bash .agents/k8s/run_k8s.sh
-#
-# Environment overrides (all optional):
-#   KUBECONFIG        default /home/toolbox/.kube/config
-#   K8S_NAMESPACE     default vllm
-#   BRANCH            default issue/775-tdm
-#   COMMIT            default HEAD of BRANCH
-#   RUN_NAME          default tdm_bsz4_500_k8s_$(date +%s)
-#   POD_NAME          default ${RUN_NAME}
-#   PVC_NAME          default lustre-pvc-vllm
-#   POLL_SECONDS      default 90   (init-time poll budget)
-#   LOCAL_OUTPUT      default ./outputs/issue-775-tdm/k8s/${RUN_NAME}
+# Stage data without GPUs, run a four-GB200 preflight, then launch training.
+# This script performs cluster mutations when invoked; do not run it until the
+# user separately approves the launch.
 
 set -euo pipefail
 
 WORKSTATION_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${WORKSTATION_ROOT}"
 
-KUBECONFIG="${KUBECONFIG:-/home/toolbox/.kube/config}"
+KUBECONFIG="${KUBECONFIG:-/home/sandbox/.kube/config}"
 export KUBECONFIG
 K8S_NAMESPACE="${K8S_NAMESPACE:-vllm}"
 BRANCH="${BRANCH:-issue/775-tdm}"
 COMMIT="${COMMIT:-$(git rev-parse "origin/${BRANCH}")}"
-RUN_NAME="${RUN_NAME:-tdm_bsz4_500_k8s_$(date +%s)}"
+RUN_NAME="${RUN_NAME:-tdm-bsz4-500-k8s-$(date +%s)}"
 POD_NAME="${POD_NAME:-${RUN_NAME}}"
+STAGE_POD_NAME="${STAGE_POD_NAME:-${POD_NAME}-stage}"
 PVC_NAME="${PVC_NAME:-lustre-pvc-vllm}"
 POLL_SECONDS="${POLL_SECONDS:-90}"
+STAGE_TIMEOUT_SECONDS="${STAGE_TIMEOUT_SECONDS:-86400}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:-${WORKSTATION_ROOT}/outputs/issue-775-tdm/k8s/${RUN_NAME}}"
 POD_OUTPUT_ROOT="/workspace/run/issue-775/${RUN_NAME}"
+SHARED_HF_HOME="/workspace/run/issue-775/shared-cache/hf"
 
-require_cmd() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        echo "ERROR: required command '$1' not found on PATH" >&2
+for command in kubectl git python3 tar; do
+    command -v "${command}" >/dev/null 2>&1 || {
+        echo "ERROR: required command '${command}' not found" >&2
         exit 1
-    fi
-}
-require_cmd kubectl
-require_cmd git
-require_cmd python3
-require_cmd tar
-
-kubectl --namespace "${K8S_NAMESPACE}" get node -o name >/dev/null
-
-echo "=== K8s TDM launch (issue 775) ==="
-echo "Namespace:        ${K8S_NAMESPACE}"
-echo "Cluster:          $(kubectl config current-context)"
-echo "Run name:         ${RUN_NAME}"
-echo "Pod name:         ${POD_NAME}"
-echo "Pod output root:  ${POD_OUTPUT_ROOT}"
-echo "Local output:     ${LOCAL_OUTPUT}"
-echo "Branch:           ${BRANCH}"
-echo "Commit:           ${COMMIT}"
-echo "Init poll budget: ${POLL_SECONDS}s"
-echo "PVC:              ${PVC_NAME}"
-echo "=============================="
+    }
+done
+if (( ${#POD_NAME} > 63 || ${#STAGE_POD_NAME} > 63 )); then
+    echo "ERROR: pod names must be at most 63 characters" >&2
+    exit 1
+fi
+kubectl --namespace "${K8S_NAMESPACE}" get nodes -o name >/dev/null
 
 mkdir -p "${LOCAL_OUTPUT}/manifests"
 POD_MANIFEST="${LOCAL_OUTPUT}/manifests/${POD_NAME}.yaml"
-POD_OUTPUT_ROOT="${POD_OUTPUT_ROOT}" \
-POD_NAME="${POD_NAME}" \
-K8S_NAMESPACE="${K8S_NAMESPACE}" \
-BRANCH="${BRANCH}" \
-COMMIT="${COMMIT}" \
-RUN_NAME="${RUN_NAME}" \
-python3 .agents/k8s/_envsubst.py < .agents/k8s/pod.yaml > "${POD_MANIFEST}"
-echo "Wrote manifest: ${POD_MANIFEST}"
+STAGE_MANIFEST="${LOCAL_OUTPUT}/manifests/${STAGE_POD_NAME}.yaml"
+render_manifest() {
+    local source=$1
+    local destination=$2
+    POD_OUTPUT_ROOT="${POD_OUTPUT_ROOT}" \
+    POD_NAME="${POD_NAME}" \
+    STAGE_POD_NAME="${STAGE_POD_NAME}" \
+    K8S_NAMESPACE="${K8S_NAMESPACE}" \
+    BRANCH="${BRANCH}" \
+    COMMIT="${COMMIT}" \
+    RUN_NAME="${RUN_NAME}" \
+    PVC_NAME="${PVC_NAME}" \
+    SHARED_HF_HOME="${SHARED_HF_HOME}" \
+        python3 .agents/k8s/_envsubst.py < "${source}" > "${destination}"
+}
+render_manifest .agents/k8s/stage-pod.yaml "${STAGE_MANIFEST}"
+render_manifest .agents/k8s/pod.yaml "${POD_MANIFEST}"
 
-if kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" -o name >/dev/null 2>&1; then
-    echo "ERROR: pod ${POD_NAME} already exists in namespace ${K8S_NAMESPACE}." >&2
-    echo "Delete it (kubectl -n ${K8S_NAMESPACE} delete pod ${POD_NAME})" >&2
-    echo "or pick a new RUN_NAME." >&2
-    exit 1
-fi
+cat <<EOF
+=== K8s TDM launch (issue 775) ===
+Namespace:        ${K8S_NAMESPACE}
+Cluster:          $(kubectl config current-context)
+Run name:         ${RUN_NAME}
+Stage pod:        ${STAGE_POD_NAME}
+GPU pod:          ${POD_NAME}
+Commit:           ${COMMIT}
+PVC:              ${PVC_NAME}
+Shared HF cache:  ${SHARED_HF_HOME}
+Pod output root:  ${POD_OUTPUT_ROOT}
+Local output:     ${LOCAL_OUTPUT}
+==================================
+EOF
 
-echo
-echo "=== Applying pod ==="
-kubectl apply -f "${POD_MANIFEST}"
+kubectl apply --dry-run=server -f "${STAGE_MANIFEST}" >/dev/null
+kubectl apply --dry-run=server -f "${POD_MANIFEST}" >/dev/null
+echo "Server-side dry-run accepted both manifests."
 
-echo
-echo "=== Waiting for pod ${POD_NAME} to be Running ==="
-kubectl --namespace "${K8S_NAMESPACE}" wait \
-    --for=jsonpath='{.status.phase}'=Running \
-    "pod/${POD_NAME}" --timeout=10m
+for name in "${STAGE_POD_NAME}" "${POD_NAME}"; do
+    if kubectl --namespace "${K8S_NAMESPACE}" get pod "${name}" -o name >/dev/null 2>&1; then
+        echo "ERROR: pod ${name} already exists; choose a new RUN_NAME" >&2
+        exit 1
+    fi
+done
 
-echo
-echo "=== Brief init-time poll (${POLL_SECONDS}s) ==="
-echo "    Polling ${POD_OUTPUT_ROOT}/cache/hf size every 20s to estimate"
-echo "    dataset download rate."
-echo
+echo "=== Applying CPU-only staging pod ==="
+kubectl apply -f "${STAGE_MANIFEST}"
 
 poll_start=$(date +%s)
-samples=()
-sample_idx=0
 poll_deadline=$(( poll_start + POLL_SECONDS ))
-while (( $(date +%s) < poll_deadline )); do
-    size=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -c stage -- \
-        du -sb "${POD_OUTPUT_ROOT}/cache/hf" 2>/dev/null | awk '{print $1}' || echo 0)
-    size=${size:-0}
-    human=$(numfmt --to=iec --suffix=B "${size}" 2>/dev/null || echo "${size}B")
+samples=()
+while (( $(date +%s) < poll_deadline && ${#samples[@]} < 5 )); do
+    phase=$(kubectl --namespace "${K8S_NAMESPACE}" get pod "${STAGE_POD_NAME}" \
+        -o jsonpath='{.status.phase}' 2>/dev/null || echo Missing)
+    if [[ "${phase}" == "Failed" ]]; then
+        kubectl --namespace "${K8S_NAMESPACE}" logs "${STAGE_POD_NAME}" || true
+        exit 1
+    fi
+    if [[ "${phase}" == "Succeeded" ]]; then
+        break
+    fi
+    size=0
+    if [[ "${phase}" == "Running" ]]; then
+        size=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${STAGE_POD_NAME}" -- \
+            du -sb "${SHARED_HF_HOME}" 2>/dev/null | awk '{print $1}' || echo 0)
+        size=${size:-0}
+    fi
     elapsed=$(( $(date +%s) - poll_start ))
-    printf "    t=%3ds  cache_size=%10s  %s\n" "${elapsed}" "${size}" "${human}"
+    printf '    t=%3ds phase=%-9s cache_bytes=%s\n' "${elapsed}" "${phase}" "${size}"
     samples+=("${elapsed}:${size}")
-    sample_idx=$(( sample_idx + 1 ))
-    if (( sample_idx >= 5 )); then break; fi
     sleep 20
 done
-echo
+
 if (( ${#samples[@]} >= 2 )); then
-    first_t=${samples[0]%:*}; first_s=${samples[0]#*:}
-    last_t=${samples[-1]%:*};  last_s=${samples[-1]#*:}
+    first_t=${samples[0]%:*}
+    first_s=${samples[0]#*:}
+    last_t=${samples[-1]%:*}
+    last_s=${samples[-1]#*:}
     dt=$(( last_t - first_t ))
     ds=$(( last_s - first_s ))
-    if (( dt > 0 )) && (( ds > 0 )); then
+    if (( dt > 0 && ds > 0 )); then
         rate_bps=$(( ds / dt ))
-        rate_human=$(numfmt --to=iec --suffix=B/s "${rate_bps}" 2>/dev/null || echo "${rate_bps}B/s")
-        target_bytes=$(( 2 * 1024 * 1024 * 1024 * 1024 ))
-        eta=$(( (target_bytes - last_s) / rate_bps ))
-        eta_human=$(printf '%dh%02dm' $((eta/3600)) $(((eta%3600)/60)))
-        echo "    Estimated download rate: ${rate_human}"
-        echo "    Estimated dataset ETA:   ~${eta_human} (assuming ~1.6 TiB total)"
-    else
-        echo "    Cache size did not grow during the poll window; the init"
-        echo "    container may still be in the git-clone or pip-install"
-        echo "    phase, or the dataset download has not started yet."
+        target_bytes=1759218604441
+        remaining=$(( target_bytes > last_s ? target_bytes - last_s : 0 ))
+        eta=$(( remaining / rate_bps ))
+        printf '    estimated cache growth=%s B/s, remaining ETA=%dh%02dm\n' \
+            "${rate_bps}" $(( eta / 3600 )) $(( (eta % 3600) / 60 ))
     fi
 fi
 
-echo
-echo "=== Continuing to wait for init container to finish ==="
-echo "    You can interrupt with Ctrl-C; the pod will keep running."
-echo "    Use resume_k8s.sh later to continue from this state."
-echo
-kubectl --namespace "${K8S_NAMESPACE}" wait \
-    --for=jsonpath='{.status.initContainerStatuses[0].state.terminated.exitCode}'=0 \
-    "pod/${POD_NAME}" --timeout=24h
+echo "=== Waiting for staging completion ==="
+stage_deadline=$(( $(date +%s) + STAGE_TIMEOUT_SECONDS ))
+while true; do
+    phase=$(kubectl --namespace "${K8S_NAMESPACE}" get pod "${STAGE_POD_NAME}" \
+        -o jsonpath='{.status.phase}' 2>/dev/null || echo Missing)
+    case "${phase}" in
+        Succeeded)
+            break
+            ;;
+        Failed|Unknown|Missing)
+            kubectl --namespace "${K8S_NAMESPACE}" logs "${STAGE_POD_NAME}" || true
+            exit 1
+            ;;
+    esac
+    if (( $(date +%s) >= stage_deadline )); then
+        echo "ERROR: staging exceeded ${STAGE_TIMEOUT_SECONDS}s" >&2
+        exit 1
+    fi
+    echo "    staging phase=${phase}"
+    sleep 60
+done
+kubectl --namespace "${K8S_NAMESPACE}" logs "${STAGE_POD_NAME}" | tail -n 50
+kubectl --namespace "${K8S_NAMESPACE}" delete pod "${STAGE_POD_NAME}" --wait=false
 
-echo
-echo "=== Init container finished; pod main container is up ==="
-kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" -o wide
+echo "=== Applying four-GB200 pod ==="
+kubectl apply -f "${POD_MANIFEST}"
+kubectl --namespace "${K8S_NAMESPACE}" wait --for=condition=Ready \
+    "pod/${POD_NAME}" --timeout=15m
 
-echo
-echo "=== Launching training inside pod (detached, nohup) ==="
+kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+    test -f "${POD_OUTPUT_ROOT}/.stage_done"
+kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+    test -L "${POD_OUTPUT_ROOT}/repo/data/Wan-Syn_77x448x832_600k"
+
+echo "=== Running four-GPU preflight ==="
+kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+    bash "${POD_OUTPUT_ROOT}/repo/.agents/k8s/run_preflight.sh" "${POD_OUTPUT_ROOT}"
+
+echo "=== Launching detached 500-step training ==="
 TRAIN_CMD="$(cat <<EOF
 set -euo pipefail
 cd '${POD_OUTPUT_ROOT}'
@@ -174,57 +172,32 @@ mkdir -p logs output
 nohup bash repo/.agents/k8s/run_train.sh '${POD_OUTPUT_ROOT}' \\
     > logs/train.launcher.out 2>&1 < /dev/null &
 TRAIN_PID=\$!
-echo "\${TRAIN_PID}" > output/train.pid
+echo \"\${TRAIN_PID}\" > output/train.pid
 disown
 sleep 2
-if kill -0 "\${TRAIN_PID}" 2>/dev/null; then
-    echo "[launcher] training process \${TRAIN_PID} is alive"
-else
-    echo "[launcher] training process \${TRAIN_PID} is NOT alive; see logs/train.launcher.out"
-    cat logs/train.launcher.out
-    exit 1
-fi
+kill -0 \"\${TRAIN_PID}\"
+echo \"[launcher] training process \${TRAIN_PID} is alive\"
 EOF
 )"
-kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-    bash -lc "${TRAIN_CMD}"
-
-echo
-echo "=== Verifying training is alive ==="
+kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- bash -lc "${TRAIN_CMD}"
 TRAIN_PID=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-    cat "${POD_OUTPUT_ROOT}/output/train.pid" 2>/dev/null || echo "")
-if [[ -n "${TRAIN_PID}" ]]; then
-    if kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-        kill -0 "${TRAIN_PID}" 2>/dev/null; then
-        echo "    training pid ${TRAIN_PID} is alive"
-    else
-        echo "    WARNING: training pid ${TRAIN_PID} is NOT alive"
-        echo "    see ${POD_OUTPUT_ROOT}/logs/train.launcher.out for the launcher log"
-    fi
-fi
+    cat "${POD_OUTPUT_ROOT}/output/train.pid")
 
 cat <<EOF
-
 =================================================================
-  Job launched. You can disconnect.
-=================================================================
-  Run name:        ${RUN_NAME}
-  Pod name:        ${POD_NAME}
-  Pod status:      $(kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null)
-  Training PID:    ${TRAIN_PID}
-  Pod output root: ${POD_OUTPUT_ROOT}
-  Local output:    ${LOCAL_OUTPUT}
+Job launched. You can disconnect.
+Run name:        ${RUN_NAME}
+Pod name:        ${POD_NAME}
+Training PID:    ${TRAIN_PID}
+Pod output root: ${POD_OUTPUT_ROOT}
+Local output:    ${LOCAL_OUTPUT}
 
-  To monitor from any new session:
-    kubectl --kubeconfig /home/toolbox/.kube/config \\
-        -n ${K8S_NAMESPACE} logs -f ${POD_NAME} -c main
-    kubectl --kubeconfig /home/toolbox/.kube/config \\
-        -n ${K8S_NAMESPACE} exec ${POD_NAME} -- \\
-        tail -F ${POD_OUTPUT_ROOT}/logs/train.log
+Monitor:
+  kubectl --kubeconfig ${KUBECONFIG} -n ${K8S_NAMESPACE} exec ${POD_NAME} -- \\
+      tail -F ${POD_OUTPUT_ROOT}/logs/train.log
 
-  When you are ready for inference, run:
-    KUBECONFIG=/home/toolbox/.kube/config \\
-    RUN_NAME=${RUN_NAME} \\
-        bash .agents/k8s/resume_k8s.sh
+Resume, validate, infer, and download:
+  KUBECONFIG=${KUBECONFIG} RUN_NAME=${RUN_NAME} \\
+      bash .agents/k8s/resume_k8s.sh
 =================================================================
 EOF

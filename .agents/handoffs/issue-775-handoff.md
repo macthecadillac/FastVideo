@@ -2300,3 +2300,65 @@ Under `.agents/k8s/`:
 - Current gate: do not run `.agents/k8s/run_k8s.sh` as committed. Await user
   approval of the revised plan and parameters before editing scripts or
   changing cluster state.
+
+
+## 2026-07-12 User-Approved K8s Corrections
+
+- User approved implementing the corrections, asked to remove the stale pod if
+  possible, requested an updated plan afterward, and explicitly prohibited any
+  new launch at this stage.
+- Refreshed GitHub before editing as `macthecadillac`: issue #775 and its two
+  comments are unchanged, the issue remains assigned to `macthecadillac`, and
+  targeted open PR search `775 OR TDM` returned `[]`.
+- Force-deleted stale pod `tdm-bsz4-500-k8s-1783762215` after confirming its
+  normal deletion had been stuck since `2026-07-11T09:41:37Z`. The API object
+  is now NotFound; node `10.0.139.114` remains Ready and reports four
+  allocatable GPUs. No container had started and no issue-775 Lustre directory
+  had been created by that stale pod.
+- Implemented corrections under `.agents/k8s/` without launching a workload:
+  - Added `stage-pod.yaml`, pinned to ARM64 `VM.Standard.A2.Flex`, with no GPU,
+    UID/GID 1000 and no `fsGroup`. It verifies image/Torch startup and Lustre
+    writes, performs an idempotent public-fork checkout, stages model/dataset
+    snapshots into the issue-shared HF hub cache, links the exact dataset
+    snapshot under `repo/data`, verifies parquet presence, and writes
+    `.stage_done` only after success.
+  - Reworked `pod.yaml` into a main-only four-GB200 pod with an explicit
+    `BM.GPU.GB200.4` selector; requests 4 GPU, 96 CPU, 768 GiB memory, and
+    200 GiB ephemeral storage; limits 4 GPU, 144 CPU, 896 GiB memory, and
+    400 GiB ephemeral storage. It omits `fsGroup` and refuses startup unless
+    staging markers/repo/data link exist.
+  - Reworked `run_k8s.sh` to render and server-side dry-run both manifests,
+    stage without GPUs, poll shared-cache growth, wait for staging success,
+    create the GPU pod only afterward, run the strict four-GPU preflight, and
+    start detached 500-step training only if preflight succeeds.
+  - Added `run_preflight.sh`: requires four CUDA devices, runs a four-rank NCCL
+    all-reduce, then executes two real TDM steps at true batch size 4 on the
+    production dataset with checkpoints and validation disabled.
+  - Updated `run_train.sh` to use the shared cache, atomically record the
+    torchrun return code, and accept `RESUME_FROM_CHECKPOINT=latest` for
+    eviction recovery.
+  - Added `validate_output.py`: requires `rc=0`, checkpoints and matching
+    metadata at 100/200/300/400/500, tracker steps 1..500, and finite numeric
+    tracker values before inference.
+  - Reworked `run_infer.sh` to fail closed, generate student four-step videos
+    for checkpoints 100/300/500 plus base Wan four-step and teacher 50-step
+    videos for the same four prompts/seed/settings, require exactly 20 MP4s,
+    and enforce 832x448, 77 frames, 16 fps with ffprobe before `.infer_done`.
+  - Reworked `resume_k8s.sh` to recreate only the GPU pod from the saved
+    manifest, resume from `latest` after eviction when a checkpoint exists,
+    reject nonzero/missing completion state, validate outputs before inference,
+    make inference idempotent, and download output/validation/log/preflight
+    artifacts. Loss before checkpoint-100 remains unrecoverable.
+  - Updated `_envsubst.py` and `PREP.md` for the new variables and workflow.
+- Validation completed so far:
+  - `bash -n` passed for all five shell scripts.
+  - AST parsing passed for `_envsubst.py` and `validate_output.py`.
+  - `git diff --check` passed.
+  - Both rendered manifests were accepted by
+    `kubectl apply --dry-run=server`; this did not create any resource.
+  - Rendered-manifest scan found no unresolved launch-time placeholders.
+  - `kubectl -n vllm get pods -l issue=775` returned no pods after dry-run.
+- No staging pod, GPU pod, preflight, training, or inference workload has been
+  launched. Continue with static/pre-commit validation, signed commit/push,
+  then the required fresh Stage 3 review/adjudication loop before reporting the
+  updated plan.

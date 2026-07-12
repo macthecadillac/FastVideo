@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
-"""Minimal envsubst for the issue-775 K8s pod manifest.
-
-Substitutes only `${VAR}` references whose names appear in the
-ALLOWED_SUBS whitelist. Any other `${VAR}` (e.g. `${GH_TOKEN}` and
-`${HF_TOKEN}`) is left intact for the container's shell to expand at
-runtime, when the env has those values.
-
-Usage:
-    VAR=value VAR2=value2 python3 _envsubst.py < in.yaml > out.yaml
-"""
+"""Minimal, whitelisted envsubst for the issue-775 K8s manifests."""
 
 import os
 import re
 import sys
 
 ALLOWED_SUBS = {
-    "POD_NAME",
-    "POD_OUTPUT_ROOT",
-    "K8S_NAMESPACE",
     "BRANCH",
     "COMMIT",
+    "K8S_NAMESPACE",
+    "POD_NAME",
+    "POD_OUTPUT_ROOT",
+    "PVC_NAME",
     "RUN_NAME",
+    "SHARED_HF_HOME",
+    "STAGE_POD_NAME",
 }
 
 src = sys.stdin.read()
