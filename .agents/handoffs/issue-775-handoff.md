@@ -2209,3 +2209,94 @@ Under `.agents/k8s/`:
   approves the K8s batch-4 run prep, run it from
   `/tmp/fastvideo-worktrees/issue-775-tdm`.
 
+
+
+## 2026-07-12 Live K8s Inspection And Revised Approval Gate
+
+- User requested a complete training/testing plan and a read-only live cluster
+  availability inspection before approving any run. No new pod or workload was
+  launched, and no existing cluster object was modified.
+- Refreshed GitHub state first as required: `gh` identity is
+  `macthecadillac`; issue #775 remains open and assigned to
+  `macthecadillac`; its two comments and labels are unchanged; targeted open
+  PR search `775 OR TDM` returned `[]`.
+- Kubeconfig `/home/sandbox/.kube/config` works. It targets cluster
+  `oci-bth-aiaccelerator-prd005` through `https://10.0.0.39:6443`, defaults
+  to namespace `vllm`, and authenticates as `vlm-mal004`.
+- Live capacity snapshot:
+  - 33 Ready `BM.GPU.GB200.4` nodes, each with 4 NVIDIA GB200 GPUs, 144 CPU,
+    about 980 GiB allocatable memory, and about 892 GiB allocatable ephemeral
+    storage.
+  - 31 are schedulable; two (`10.0.132.28`, `10.0.134.85`) are cordoned and
+    expose zero allocatable GPUs.
+  - Within namespace `vllm`, eight Running pods each reserve all four GPUs on
+    their node. One stale issue-775 pod also reserves four GPUs. Therefore 22
+    schedulable GB200 nodes are not visibly claimed by a full-GPU pod in
+    `vllm`, but the current identity cannot list pods cluster-wide, so other
+    namespaces may reduce real availability. The Metrics API is unavailable.
+  - No `ResourceQuota` or `LimitRange` exists in `vllm`. The identity can
+    create/get/delete pods, use pod exec/logs, and list events.
+  - `lustre-pvc-vllm` is Bound, RWX, 124 TiB. Its mounted root is mode `2775`,
+    UID 0, GID 1000. `github-token-secret` and `hf-token` exist; secret values
+    were not read.
+- Unexpected stale cluster state: pod `tdm-bsz4-500-k8s-1783762215`, created
+  from commit `fa8abed817bbe45b27679c16c9bde3d567fac75b`, is still Pending and has
+  been Terminating for about 20 hours on node `10.0.139.114`. It never started
+  its init container or created `/issue-775` on Lustre. Repeated events say
+  `VolumePermissionChangeInProgress`, `processed 0 files`.
+- Root cause of that stale pod and a blocker in the current committed manifest:
+  pod-level `fsGroup: 1000` makes kubelet attempt recursive ownership handling
+  on the 124 TiB Lustre mount. Because the mount is already group 1000 and
+  group-writable, the corrected manifest should remove `fsGroup` while keeping
+  `runAsUser: 1000` and `runAsGroup: 1000`.
+- Second launch blocker in the current manifest: the main container requests
+  `ephemeral-storage: 1Ti`, but a GB200 node has only about 892 GiB allocatable.
+  The pod cannot schedule with that request. The dataset/model/checkpoints live
+  on Lustre, so reduce ephemeral request/limit to 200/400 GiB (or similarly
+  bounded values), and reduce the 1000 GiB memory limit to a value no greater
+  than node allocatable (recommended 896 GiB). Keep 4 GPUs, 96 CPU requested,
+  144 CPU limit, and 768 GiB memory requested.
+- Other prep defects to correct before launch:
+  - Add an explicit `BM.GPU.GB200.4` node selector.
+  - Make init checkout idempotent when the durable repo already exists, so pod
+    recreation can actually resume.
+  - Build the dataset symlink from the exact path returned by
+    `snapshot_download`; the current `snapshots/*/*` glob can expand to many
+    sources and silently fail because it ends with `|| true`.
+  - Use an issue-shared HF cache rather than a run-local cache so a 1.6 TiB
+    dataset download is reused by later runs. Checked likely existing shared
+    cache locations; neither the Wan-Syn dataset nor Wan model is present, so
+    the first corrected run must stage them.
+  - Parse `.train_done` and require `rc=0` before inference. Make inference
+    return nonzero if either student or teacher generation fails.
+  - The `image-preload` daemonset does not preload the FastVideo image; its
+    init images are unrelated and its main image is `busybox`. Budget for the
+    first FastVideo image pull and verify ARM64 compatibility during preflight.
+- Proposed approval plan:
+  1. On approval, first patch the launch files with the corrections above,
+     commit/sign/push, and rerun the required review/validation cycle because
+     these are post-Stage-2 code changes.
+  2. Clear the stale terminating pod (prefer cluster-admin remediation of the
+     stuck Lustre ownership operation; force deletion only with explicit user
+     approval), then run a short corrected pod/storage/image preflight.
+  3. Stage `FastVideo/Wan-Syn_77x448x832_600k` (~1.6 TiB) and
+     `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` (~30 GiB) into the issue-shared cache;
+     verify snapshot completeness and the data symlink before allocating the
+     long training run.
+  4. Train at pinned branch head with 4 GPUs, true batch size 4, gradient
+     accumulation 1, 500 steps, checkpoints every 100 steps, TDM generator
+     update interval 1, ODE rollout/validation, flow shift 8, and validation
+     disabled during training.
+  5. Gate success on exit code 0, checkpoint-500 presence, 500 unique tracker
+     steps, finite loss/gradient metrics, and no distributed/OOM errors.
+  6. Generate same-seed comparisons for the four committed prompts: trained
+     TDM student at 4 steps, base Wan/DMD at 4 steps, and base Wan teacher at
+     50 steps. Prefer student snapshots at steps 100, 300, and 500 to show
+     progression, then verify all MP4s are 832x448, 77 frames, 16 fps, and
+     visually compare prompt fidelity, motion, detail, contrast, and artifacts.
+  7. Pull checkpoints, tracker/config/logs, manifests, prompts, and videos to
+     `outputs/issue-775-tdm/k8s/<run-name>/`; leave the pod only until artifact
+     verification is complete, then delete it.
+- Current gate: do not run `.agents/k8s/run_k8s.sh` as committed. Await user
+  approval of the revised plan and parameters before editing scripts or
+  changing cluster state.
