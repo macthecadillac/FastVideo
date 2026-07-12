@@ -2847,3 +2847,11 @@ For model/pipeline changes, also check:
   reviewed commit `ddfa9732d`.
 - Next: commit the implementation/tests/docs/handoff with GPG signing, verify
   the signature, and push `issue/775-tdm` immediately. No PR will be opened.
+- Signed implementation/test/docs/handoff commit
+  `635f36a4412d25b6ef3606be713af565bbf3cd88`
+  `[fix]: align TDM validation and Huber scaling` was created and pushed to
+  `origin/issue/775-tdm`. `git log -1 --show-signature` reported a good
+  signature from `Mac Lee <macthecadillac@gmail.com>` using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887`.
+- Both reviewer findings were accepted and corrected. No finding was rejected,
+  no PR was opened, and no GitHub issue or PR state was modified.
