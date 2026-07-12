@@ -2599,3 +2599,38 @@ For model/pipeline changes, also check:
   across staging, preflight, training, inference, and resume scripts. Validate,
   sign/push, and rerun Stage 3 before launching a fresh run name. Do not open a
   PR.
+
+
+## 2026-07-12 Independent FastWan Schedule Adjudication
+
+- Independently reviewed commit `4118ec84229f004e93772d6feee98d07ae8b033d`
+  in isolated worktree `/tmp/fastvideo_adjudicator_775_4118ec84`.
+- Verified `gh` identity as `macthecadillac`; issue #775 remains open and
+  assigned to `macthecadillac`, its two comments are unchanged, and no open
+  PR matched `775 OR TDM`.
+- Accepted the reviewer finding. `DmdDenoisingStage` passed existing FastWan
+  scheduler-space values such as `[1000, 757, 522]` to
+  `FlowMatchEulerDiscreteScheduler.set_timesteps(timesteps=...)`, which
+  treated them as raw values and applied `flow_shift` again. The legacy stage
+  instead looked those labels up in an already-shifted scheduler table, where
+  they represented sigmas approximately `[1.0, 0.757, 0.522]`.
+- Implemented a scoped compatibility contract:
+  - added `PipelineConfig.dmd_denoising_steps_are_scheduler_space`, default
+    `False`, preserving the new raw-step TDM behavior;
+  - enabled it only for `FastWan2_1_T2V_480P_Config` and
+    `FastWan2_2_TI2V_5B_Config`;
+  - rebuilt those legacy schedules through inverse flow-shift sigmas so the
+    scheduler publishes the original timestep labels and matching sigmas
+    without changing its configured shift;
+  - added focused coverage for both shipped FastWan presets.
+- Validation:
+  - `git diff --check`: passed.
+  - `python3 -m py_compile` on all four changed Python files: passed.
+  - changed-file `pre-commit run --files ...`: all hooks passed, including
+    yapf, ruff, codespell, and mypy.
+  - Modal L40S app `ap-kUSBlG1XaabDm1UzjjxPDu` ran
+    `pytest tests/local_tests/tdm/ -v -s` from commit `4118ec842` with the
+    local patch applied: `23 passed, 14 warnings in 19.24s`.
+- Targeted FastWan T2V/TI2V SSIM regressions remain unrun and should be
+  completed before merging.
+- No PR was opened and no GitHub issue or PR state was modified.

@@ -9,6 +9,10 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from fastvideo.configs.pipelines.wan import (
+    FastWan2_1_T2V_480P_Config,
+    FastWan2_2_TI2V_5B_Config,
+)
 from fastvideo.models.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from fastvideo.pipelines.stages.denoising import DmdDenoisingStage
 from fastvideo.train.methods.distribution_matching.tdm import (
@@ -78,6 +82,29 @@ def test_dmd_denoising_stage_preserves_configured_scheduler_shift() -> None:
 
     assert stage.scheduler is scheduler
     assert stage.scheduler.shift == 5.0
+
+
+@pytest.mark.parametrize(
+    "config_cls",
+    [FastWan2_1_T2V_480P_Config, FastWan2_2_TI2V_5B_Config],
+)
+def test_dmd_denoising_stage_preserves_legacy_scheduler_space_steps(config_cls: type) -> None:
+    config = config_cls()
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=config.flow_shift)
+    stage = DmdDenoisingStage(
+        transformer=_DenoisingStageTransformerStub(),
+        scheduler=scheduler,
+    )
+
+    timesteps = stage._set_dmd_timesteps(
+        torch.tensor(config.dmd_denoising_steps),
+        device=torch.device("cpu"),
+        scheduler_space=config.dmd_denoising_steps_are_scheduler_space,
+    )
+
+    assert config.dmd_denoising_steps_are_scheduler_space is True
+    assert_close(timesteps, torch.tensor([1000.0, 757.0, 522.0]))
+    assert_close(scheduler.sigmas, torch.tensor([1.0, 0.757, 0.522, 0.0]))
 
 
 def test_tdm_flow_bridge_smoke() -> None:

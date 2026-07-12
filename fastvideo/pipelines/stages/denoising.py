@@ -1252,6 +1252,29 @@ class DmdDenoisingStage(DenoisingStage):
             return sigma.reshape((1, ) + (1, ) * (latents.ndim - 1))
         return sigma.reshape((latents.shape[0], ) + (1, ) * (latents.ndim - 1))
 
+    def _set_dmd_timesteps(
+        self,
+        timesteps: torch.Tensor,
+        *,
+        device: torch.device,
+        scheduler_space: bool,
+    ) -> torch.Tensor:
+        if scheduler_space:
+            num_train_timesteps = self.scheduler.config.num_train_timesteps
+            shifted_sigmas = timesteps.float() / num_train_timesteps
+            shift = float(self.scheduler.shift)
+            sigmas = shifted_sigmas / (shift - (shift - 1.0) * shifted_sigmas)
+            self.scheduler.set_timesteps(
+                sigmas=sigmas.detach().cpu().tolist(),
+                device=device,
+            )
+        else:
+            self.scheduler.set_timesteps(
+                timesteps=timesteps.detach().cpu(),
+                device=device,
+            )
+        return self.scheduler.timesteps.to(device=device)
+
     def forward(
         self,
         batch: ForwardBatch,
@@ -1314,11 +1337,11 @@ class DmdDenoisingStage(DenoisingStage):
         timesteps = torch.tensor(fastvideo_args.pipeline_config.dmd_denoising_steps,
                                  dtype=torch.long,
                                  device=get_local_torch_device())
-        self.scheduler.set_timesteps(
-            timesteps=timesteps.detach().cpu(),
+        timesteps = self._set_dmd_timesteps(
+            timesteps,
             device=get_local_torch_device(),
+            scheduler_space=fastvideo_args.pipeline_config.dmd_denoising_steps_are_scheduler_space,
         )
-        timesteps = self.scheduler.timesteps.to(device=get_local_torch_device())
         sample_type = str(getattr(
             fastvideo_args.pipeline_config,
             "dmd_sample_type",

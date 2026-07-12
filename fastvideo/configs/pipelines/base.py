@@ -75,6 +75,7 @@ class PipelineConfig:
     # DMD parameters
     dmd_denoising_steps: list[int] | None = field(default=None)
     dmd_sample_type: str = "sde"
+    dmd_denoising_steps_are_scheduler_space: bool = False
 
     # Wan2.2 task modifiers
     ti2v_task: bool = False
