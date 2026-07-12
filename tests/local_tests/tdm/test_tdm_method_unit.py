@@ -77,29 +77,6 @@ class _ShiftedFlowScheduler(_FakeFlowScheduler):
         )
 
 
-class _DenseShiftedFlowScheduler(_ShiftedFlowScheduler):
-
-    def __init__(self) -> None:
-        raw_timesteps = torch.arange(
-            1000,
-            0,
-            -1,
-            dtype=torch.float32,
-        )
-        raw_sigmas = raw_timesteps / 1000.0
-        shifted_sigmas = self.shift * raw_sigmas / (1.0 + (self.shift - 1.0) * raw_sigmas)
-        self.timesteps = shifted_sigmas * 1000.0
-        self.sigmas = shifted_sigmas
-        self.config = SimpleNamespace(
-            num_train_timesteps=1000,
-            use_dynamic_shifting=False,
-            shift_terminal=None,
-            use_karras_sigmas=False,
-            use_exponential_sigmas=False,
-            use_beta_sigmas=False,
-        )
-
-
 class _TinyRoleModel(ModelBase):
 
     def __init__(
@@ -367,18 +344,33 @@ def test_tdm_real_shifted_scheduler_aligns_noising_model_labels_and_x0_conversio
         assert_close(trajectory.noisy_latents[index + 1], expected_next)
 
 
-def test_tdm_warped_denoising_steps_use_scheduler_sigmas_without_double_shift() -> None:
-    method, student, _ = _build_method(method_overrides={"warp_denoising_step": True})
-    student.noise_scheduler = _DenseShiftedFlowScheduler()
+def test_tdm_warped_student_trajectory_uses_scheduler_sigmas_without_double_shift() -> None:
+    method, student, _ = _build_method(method_overrides={
+        "warp_denoising_step": True,
+        "student_sample_type": "ode",
+    })
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=8.0)
+    student.noise_scheduler = scheduler
+    batch = student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
 
-    steps = method._get_denoising_step_list(torch.device("cpu"))
-    sigmas = method._timestep_to_sigma(steps, scheduler_space=True)
+    trajectory = method._student_trajectory(batch)
+
     step_indices = torch.tensor([0, 250, 500, 750])
-    expected_steps = student.noise_scheduler.timesteps[step_indices]
-    expected_sigmas = student.noise_scheduler.sigmas[step_indices]
+    expected_steps = scheduler.timesteps[step_indices]
+    expected_sigmas = scheduler.sigmas[step_indices]
+    model_labels = torch.tensor([call[2] for call in student.predict_calls])
+    assert_close(trajectory.timesteps, expected_steps)
+    assert_close(trajectory.sigmas, expected_sigmas)
+    assert_close(model_labels, expected_steps)
 
-    assert_close(steps, expected_steps)
-    assert_close(sigmas, expected_sigmas)
+    for index in range(len(trajectory.noisy_latents) - 1):
+        noisy = trajectory.noisy_latents[index]
+        clean = trajectory.clean_latents[index]
+        sigma = trajectory.sigmas[index]
+        next_sigma = trajectory.sigmas[index + 1]
+        eps = (noisy - (1.0 - sigma) * clean) / sigma
+        expected_next = (1.0 - next_sigma) * clean + next_sigma * eps
+        assert_close(trajectory.noisy_latents[index + 1], expected_next)
 
 
 @pytest.mark.parametrize(
@@ -498,6 +490,46 @@ def test_tdm_to_terminal_fake_score_loss_trains_critic() -> None:
     grad = critic.transformer.weight.grad
     assert grad is not None
     assert float(grad.abs().item()) > 0.0
+
+
+def test_tdm_generator_delta_normalization_is_per_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    method, student, critic = _build_method(method_overrides={
+        "real_score_guidance_scale": 1.0,
+        "use_huber": False,
+    })
+    teacher = method.teacher
+    batch = student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    pred = torch.zeros((2, 1, 1, 1, 1), requires_grad=True)
+    real_x0 = torch.tensor([1.0, 100.0]).reshape(2, 1, 1, 1, 1)
+    fake_x0 = torch.zeros_like(real_x0)
+    context = SimpleNamespace(
+        noisy_from=torch.zeros_like(pred),
+        timestep_from=torch.tensor([500.0]),
+        timestep_to=torch.tensor([750.0]),
+        sigma_from=torch.tensor([0.5]),
+        sigma_to=torch.tensor([0.75]),
+        proposal_noise=torch.zeros_like(pred),
+        trajectory_index=2,
+        target_trajectory_index=1,
+    )
+
+    monkeypatch.setattr(method, "_sample_tdm_context", lambda trajectory: context)
+    monkeypatch.setattr(student, "predict_x0", lambda *args, **kwargs: pred)
+    monkeypatch.setattr(critic, "predict_x0", lambda *args, **kwargs: fake_x0)
+    monkeypatch.setattr(
+        teacher,
+        "predict_x0",
+        lambda *args, conditional, **kwargs: real_x0 if conditional else torch.zeros_like(real_x0),
+    )
+
+    loss, metrics = method._tdm_generator_loss(SimpleNamespace(), batch)
+    loss.backward()
+
+    assert_close(pred.grad, torch.full_like(pred, -1.0))
+    assert_close(
+        torch.as_tensor(metrics["tdm/generator/normalization_denom"]),
+        torch.tensor(50.5),
+    )
 
 
 def test_tdm_use_huber_is_generator_only_and_matches_reference_pseudo_huber() -> None:

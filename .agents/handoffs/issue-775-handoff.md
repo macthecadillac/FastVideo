@@ -2744,3 +2744,46 @@ For model/pipeline changes, also check:
   #775 stayed open and assigned with unchanged comments; targeted open PR
   search returned `[]`; remote `issue/775-tdm` still pointed to reviewed
   baseline `61d489cbd5f41881bdfb58e3c29967acdc6e51b9`.
+
+
+## 2026-07-12 Independent Schedule-Provenance And Batch-Normalization Adjudication
+
+- User requested independent adjudication of two reviewer findings against issue #775,
+  official Luo-Yihong/TDM commit
+  `81b019f91539948d49da86cef12ccc64030c5022`, and FastVideo commit
+  `e822a7c90cc5dcc3624c0a1f399a9b9b3901fc31`.
+- Dedicated worktree: `/tmp/fastvideo-worktrees/issue-775-tdm` on
+  `issue/775-tdm`, initially clean and synced at the reviewed commit.
+- Verified `gh` identity `macthecadillac`. Issue #775 remains open and assigned
+  to `macthecadillac`; both comments are unchanged and contain no proposed fix;
+  targeted open PR search `775 OR TDM` returned no matches.
+- Independently accepted both findings:
+  1. Warped steps are scheduler labels. Schedule validation correctly used
+     `scheduler_space=True`, but `_student_trajectory()` recomputed current and
+     next sigmas as raw timesteps. With shift 8 this double-shifted labels such as
+     approximately 960 and could make authoritative model-label resolution fail.
+  2. FastVideo reduced the generator normalization denominator across batch and
+     latent dimensions. Official TDM line 1178 preserves the batch dimension and
+     reduces latent dimensions with `keepdim=True`, so local batches larger than
+     one require independent per-sample denominators.
+- Minimal corrections applied but not yet committed:
+  - cache the validated authoritative sigma list beside the denoising step list and
+    consume those sigmas directly throughout SDE/ODE trajectory rollout;
+  - reduce generator normalization over all non-batch dimensions with retained
+    dimensions for broadcasting, while logging the batch-mean denominator;
+  - replace helper-only warped coverage with a full
+    `_student_trajectory()` regression using the real shift-8 scheduler;
+  - add a batch-size-two gradient regression with per-sample score errors 1 and
+    100, which must produce identical normalized gradients.
+- Validation completed:
+  - local non-test checks `git diff --check` and `python3 -m py_compile` on
+    both changed Python files passed; no local project tests were run;
+  - Modal L40S app `ap-vJoiJe0mTVbFZV84yZlgum` checked out exact commit
+    `e822a7c90`, applied only the implementation/test patch, and ran
+    `pytest tests/local_tests/tdm/test_tdm_method_unit.py
+    fastvideo/tests/train/methods/test_tdm_config_path.py -q`: 21 passed in
+    2.24s;
+  - the same Modal app ran changed-file `pre-commit run --files ...`; yapf,
+    ruff, codespell, mypy, filename-space, and suggestion hooks passed.
+- Next: refresh GitHub state, sign, commit, verify the signature, and push
+  immediately. No PR will be opened.

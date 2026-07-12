@@ -179,6 +179,7 @@ class TDMMethod(DMD2Method):
 
         mcfg = self.method_config
         self._denoising_step_list: torch.Tensor | None = None
+        self._denoising_sigma_list: torch.Tensor | None = None
         self._rollout_sample_type: Literal["sde", "ode"] = require_choice(
             mcfg,
             "student_sample_type",
@@ -358,6 +359,7 @@ class TDMMethod(DMD2Method):
             raise ValueError("method.tdm_denoising_steps must map to strictly decreasing scheduler sigmas")
 
         self._denoising_step_list = steps
+        self._denoising_sigma_list = sigmas
         return steps
 
     def _timestep_to_sigma(
@@ -469,6 +471,9 @@ class TDMMethod(DMD2Method):
         device = latents.device
         dtype = latents.dtype
         step_list = self._get_denoising_step_list(device)
+        sigma_list = self._denoising_sigma_list
+        if sigma_list is None:
+            raise RuntimeError("TDM denoising sigmas were not initialized with the step schedule")
         if len(step_list) < 2:
             raise ValueError("TDM requires at least two denoising steps")
 
@@ -482,9 +487,8 @@ class TDMMethod(DMD2Method):
         clean_latents: list[torch.Tensor] = []
         sigmas: list[torch.Tensor] = []
 
-        for step_idx, timestep_scalar in enumerate(step_list):
-            timestep = timestep_scalar.reshape(1)
-            sigma = self._timestep_to_sigma(timestep)
+        for step_idx in range(len(step_list)):
+            sigma = sigma_list[step_idx].reshape(1)
             model_timestep = self._model_timestep_for_sigma(sigma, self.student)
             with torch.no_grad():
                 pred_x0 = self.student.predict_x0(
@@ -503,7 +507,7 @@ class TDMMethod(DMD2Method):
             if step_idx + 1 >= len(step_list):
                 break
 
-            next_timestep = step_list[step_idx + 1].reshape(1)
+            sigma_next = sigma_list[step_idx + 1].reshape(1)
             if self._rollout_sample_type == "sde":
                 noise = torch.randn(
                     latents.shape,
@@ -511,16 +515,13 @@ class TDMMethod(DMD2Method):
                     dtype=dtype,
                     generator=self.cuda_generator,
                 )
-                sigma_next = self._timestep_to_sigma(next_timestep)
                 sigma_next_b = _expand_sigma_for_latents(sigma_next, current_noisy)
                 current_noisy = (1.0 - sigma_next_b) * pred_x0 + sigma_next_b * noise
             else:
-                sigma_cur = self._timestep_to_sigma(timestep)
-                sigma_next = self._timestep_to_sigma(next_timestep)
                 eps = flow_effective_noise(
                     current_noisy,
                     pred_x0,
-                    sigma_cur,
+                    sigma,
                     eps=self._sigma_eps,
                 )
                 sigma_next_b = _expand_sigma_for_latents(sigma_next, current_noisy)
@@ -837,7 +838,11 @@ class TDMMethod(DMD2Method):
             raw_delta_abs_mean = delta.detach().float().abs().mean()
             denom = torch.ones((), device=device, dtype=torch.float32)
             if self._normalize_generator_delta:
-                denom = torch.abs(generator_pred_x0.detach() - real_cfg_x0).mean()
+                reduce_dims = tuple(range(1, generator_pred_x0.ndim))
+                denom = torch.abs(generator_pred_x0.detach() - real_cfg_x0).mean(
+                    dim=reduce_dims,
+                    keepdim=True,
+                )
                 delta = delta / denom.clamp_min(self._sigma_eps)
             target_delta = torch.nan_to_num(delta)
             target = generator_pred_x0.detach() + target_delta
@@ -857,7 +862,7 @@ class TDMMethod(DMD2Method):
             "tdm/generator/target_sigma": context.sigma_to.detach().float().mean(),
             "tdm/generator/raw_delta_abs_mean": raw_delta_abs_mean,
             "tdm/generator/target_delta_abs_mean": target_delta.detach().float().abs().mean(),
-            "tdm/generator/normalization_denom": denom.detach().float(),
+            "tdm/generator/normalization_denom": denom.detach().float().mean(),
             "tdm/generator/normalize_delta": float(self._normalize_generator_delta),
         }
         return loss.mean(), metrics
