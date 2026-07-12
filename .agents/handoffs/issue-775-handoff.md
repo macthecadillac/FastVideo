@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-12 Kubernetes Python runtime repair on issue/775-tdm
+Last updated: 2026-07-12 reviewed Kubernetes staging launch on issue/775-tdm
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -3088,6 +3088,37 @@ For model/pipeline changes, also check:
     corrected manifests;
   - `kubectl -n vllm get pods -l issue=775` reported no resources after all
     temporary image/runtime probes and the failed staging pod were deleted.
-- Next: sign, commit, and push the manifest correction; run the exact committed
-  head through full pre-commit and a tightly scoped fresh review cycle; then
-  launch a fresh run name pinned to that reviewed commit. Do not open a PR.
+- Signed manifest/handoff commit
+  `7e8f151c8aaf7c668767f93c1689a2e68255a0ed`
+  (`[fix]: expose Python runtime to K8s workloads`) has a verified good GPG
+  signature from Mac Lee and was pushed to `origin/issue/775-tdm`.
+- Exact-head validation and review:
+  - full `uvx pre-commit run --all-files` passed in the underscore-path
+    validation clone, including mypy;
+  - the first fresh read-only reviewer was stopped after it stalled without
+    output or changes;
+  - a replacement tightly scoped review-code pass completed with no actionable
+    findings in either manifest;
+  - residual risk is limited to the mutable `latest` image retaining its uv
+    runtime layout and cluster policy continuing to allow the root init
+    container. The live probe and API dry-runs cover the current image/policy.
+- Refreshed cluster availability before launch: four Ready/schedulable ARM64
+  staging nodes; 30 Ready/schedulable GB200 nodes advertising four GPUs;
+  eight of those GB200 nodes were visibly occupied by four-GPU pods in
+  `vllm`. RBAC prevents checking allocations in other namespaces.
+- Fresh approved run `tdm-bsz4-500-k8s-20260712144347` launched through a
+  separate `setsid` driver at PID `176880`, pinned to exact reviewed commit
+  `7e8f151c8aaf7c668767f93c1689a2e68255a0ed`. Driver log:
+  `/tmp/tdm-bsz4-500-k8s-20260712144347.launcher.log`.
+- The CPU staging pod is Running on Ready node `10.0.143.72`. It checked out
+  the exact commit and reported `/opt/venv/bin/python3`, PyTorch
+  `2.12.0+cu130`, and CUDA `13.0`; model download is active. At startup the
+  shared cache reached `30,162,544,546` bytes and the launcher estimated
+  `1h24m` from the short initial growth sample. Treat that estimate as
+  optimistic because it mostly covers the small model phase before the
+  approximately 1.6 TiB dataset transfer.
+- The four-GB200 pod has not been created; the launcher creates it only after
+  staging succeeds, then runs the four-rank preflight and starts detached
+  500-step training. Planning estimate remains 5-7 hours staging plus
+  21-34 hours training/preflight/inference, or about 27-42 hours total.
+- No PR was opened.
