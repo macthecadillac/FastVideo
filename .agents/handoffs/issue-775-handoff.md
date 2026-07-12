@@ -2540,3 +2540,27 @@ For model/pipeline changes, also check:
 - [ ] I verified targeted Wan T2V SSIM regression tests pass on L40S
 - [x] I updated the support matrix if adding a new model (not applicable; no new model family)
 ```
+
+
+## 2026-07-12 Approved K8s Launch Attempt And Root-Path Blocker
+
+- User explicitly approved running the test plan, requested a status update and
+  runtime estimate afterward, and explicitly prohibited opening a PR.
+- Refreshed GitHub as `macthecadillac`: issue #775/comments unchanged, no
+  related open PR, branch clean/synced at `3421e558f`. Live cluster had four
+  Ready `VM.Standard.A2.Flex` staging nodes, 31 schedulable GB200 nodes, and no
+  `issue=775` pod.
+- Selected run name `tdm-bsz4-500-k8s-20260712080156`, pinned commit
+  `3421e558f55513f00429dd1fff36d0144593b077`.
+- First detached `nohup` attempt was killed by the command environment before
+  it wrote output. A persistent foreground retry then failed immediately,
+  before rendering or Kubernetes mutation, with:
+  `.agents/k8s/run_k8s.sh: line 44: .agents/k8s/stage-pod.yaml: No such file or directory`.
+- Root cause: both workstation drivers live in `.agents/k8s` but resolved the
+  repository root with `../../..`, which lands one directory above the repo.
+  Corrected both `run_k8s.sh` and `resume_k8s.sh` to use `../..`.
+- Post-fix static checks: `bash -n` passed, `git diff --check` passed, exact
+  diff is two path lines, and `kubectl -n vllm get pods -l issue=775` remains
+  empty. No staging, GPU, training, or inference workload has launched yet.
+- Because this is a code change after Stage 2, commit/sign/push and rerun the
+  full Stage 3 review cycle before relaunch. Do not open a PR.

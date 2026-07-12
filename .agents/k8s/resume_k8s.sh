@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-WORKSTATION_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+WORKSTATION_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${WORKSTATION_ROOT}"
 KUBECONFIG="${KUBECONFIG:-/home/sandbox/.kube/config}"
 export KUBECONFIG
