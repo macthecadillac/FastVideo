@@ -354,7 +354,7 @@ method:
 | `use_randmid` | `true` | Randomly choose the generated trajectory point for fake-score training |
 | `snr_clip` | `5.0` | Clip the flow-SNR fake-score weight |
 | `importance_weight_clip` | `10.0` | Clip mixed-noise importance weights |
-| `normalize_generator_delta` | `true` | Normalize real-vs-fake generator target delta |
+| `normalize_generator_delta` | `true` | Divide each sample's generator loss by its teacher-guidance magnitude |
 | `use_huber` | `false` | Use the reference pseudo-Huber expression for the generator loss; fake-score training remains MSE |
 | `huber_c` | `0.001` | Huber delta when `use_huber=true` |
 

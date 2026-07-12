@@ -532,6 +532,52 @@ def test_tdm_generator_delta_normalization_is_per_sample(monkeypatch: pytest.Mon
     )
 
 
+def test_tdm_pseudo_huber_applies_per_sample_normalization_after_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    huber_c = 0.25
+    method, student, critic = _build_method(method_overrides={
+        "real_score_guidance_scale": 1.0,
+        "use_huber": True,
+        "huber_c": huber_c,
+    })
+    teacher = method.teacher
+    batch = student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    pred = torch.zeros((2, 1, 1, 1, 1), requires_grad=True)
+    real_x0 = torch.tensor([1.0, 100.0]).reshape_as(pred)
+    fake_x0 = torch.zeros_like(real_x0)
+    context = SimpleNamespace(
+        noisy_from=torch.zeros_like(pred),
+        timestep_from=torch.tensor([500.0]),
+        timestep_to=torch.tensor([750.0]),
+        sigma_from=torch.tensor([0.5]),
+        sigma_to=torch.tensor([0.75]),
+        proposal_noise=torch.zeros_like(pred),
+        trajectory_index=2,
+        target_trajectory_index=1,
+    )
+
+    monkeypatch.setattr(method, "_sample_tdm_context", lambda trajectory: context)
+    monkeypatch.setattr(student, "predict_x0", lambda *args, **kwargs: pred)
+    monkeypatch.setattr(critic, "predict_x0", lambda *args, **kwargs: fake_x0)
+    monkeypatch.setattr(
+        teacher,
+        "predict_x0",
+        lambda *args, conditional, **kwargs: real_x0 if conditional else torch.zeros_like(real_x0),
+    )
+
+    loss, _ = method._tdm_generator_loss(SimpleNamespace(), batch)
+    loss.backward()
+
+    reference_pred = torch.zeros_like(pred, requires_grad=True)
+    reference_error = reference_pred - real_x0
+    reference_denom = torch.abs(reference_pred.detach() - real_x0)
+    reference_loss = ((torch.sqrt(reference_error.square() + huber_c**2) - huber_c) / reference_denom).mean()
+    reference_loss.backward()
+
+    assert_close(loss, reference_loss.detach())
+    assert_close(pred.grad, reference_pred.grad)
+    assert not torch.isclose(pred.grad[0], pred.grad[1]).item()
+
+
 def test_tdm_use_huber_is_generator_only_and_matches_reference_pseudo_huber() -> None:
     mse_method, _, _ = _build_method(method_overrides={"use_huber": False})
     huber_method, _, _ = _build_method(method_overrides={"use_huber": True, "huber_c": 0.25})

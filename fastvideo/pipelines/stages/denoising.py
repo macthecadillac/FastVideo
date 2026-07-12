@@ -1264,15 +1264,13 @@ class DmdDenoisingStage(DenoisingStage):
             shifted_sigmas = timesteps.float() / num_train_timesteps
             shift = float(self.scheduler.shift)
             sigmas = shifted_sigmas / (shift - (shift - 1.0) * shifted_sigmas)
-            self.scheduler.set_timesteps(
-                sigmas=sigmas.detach().cpu().tolist(),
-                device=device,
-            )
         else:
-            self.scheduler.set_timesteps(
-                timesteps=timesteps.detach().cpu(),
-                device=device,
-            )
+            num_train_timesteps = self.scheduler.config.num_train_timesteps
+            sigmas = timesteps.float() / num_train_timesteps
+        self.scheduler.set_timesteps(
+            sigmas=sigmas.detach().cpu().tolist(),
+            device=device,
+        )
         return self.scheduler.timesteps.to(device=device)
 
     def forward(

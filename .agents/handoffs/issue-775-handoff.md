@@ -2796,3 +2796,54 @@ For model/pipeline changes, also check:
   `99C0619273F09B8BF8F3AC64C943F92E5C32D887`.
 - Both reviewer findings are accepted and corrected. No finding was rejected,
   no PR was opened, and no GitHub issue or PR state was modified.
+
+
+## 2026-07-12 Independent Validation-Schedule And Pseudo-Huber Adjudication
+
+- User requested independent adjudication of two reviewer findings against
+  issue #775, official Luo-Yihong/TDM commit
+  `81b019f91539948d49da86cef12ccc64030c5022`, and FastVideo commit
+  `ddfa9732de753f06bc89d7f45e0d3cb7cdeb5c39`.
+- Dedicated worktree: `/tmp/fastvideo-worktrees/issue-775-tdm` on
+  `issue/775-tdm`, initially clean and synced at the reviewed commit.
+- Verified `gh` identity `macthecadillac`. Issue #775 remains open and assigned
+  to `macthecadillac`; both comments are unchanged and contain no proposed fix;
+  no open PR targets issue 775, TDM, or `issue/775-tdm`.
+- Independently accepted both findings:
+  1. The raw DMD path passed `[1000, 750, 500, 250]` through the scheduler's
+     `timesteps=` input. The scheduler shifted the corresponding sigmas but
+     intentionally retained those raw labels, while TDM training resolves
+     authoritative labels from shifted sigmas (for example, raw 750 maps to a
+     model label above 900 at shift 8).
+  2. Official TDM lines 1178-1187 apply pseudo-Huber to the unnormalized
+     elementwise generator error and divide the resulting loss by the
+     per-sample denominator. FastVideo divided the score delta before the
+     nonlinear pseudo-Huber transform, which is not gradient-equivalent.
+- Minimal corrections applied but not yet committed:
+  - raw DMD steps are converted to raw sigmas and passed through `sigmas=`, so
+    the scheduler publishes authoritative shifted labels; the existing
+    scheduler-space inverse mapping remains intact for FastWan compatibility;
+  - generator targets retain the raw score delta and per-sample normalization
+    is applied after MSE or pseudo-Huber;
+  - package-level coverage compares shifted TDM training labels directly with
+    DMD validation labels from the shipped config;
+  - a heterogeneous two-sample pseudo-Huber regression compares both loss and
+    gradients to the official operation order;
+  - durable docs describe loss normalization rather than target-delta
+    normalization.
+- Validation completed:
+  - local non-test checks `git diff --check` and `python3 -m py_compile` on
+    all four changed Python files passed; no local project tests were run;
+  - Modal L40S app `ap-yMrxzvw7qC9KwQDaFTWkHA` checked out exact commit
+    `ddfa9732d`, applied only the scoped patch, and ran
+    `pytest tests/local_tests/tdm/ fastvideo/tests/train/methods/test_tdm_config_path.py -q`:
+    33 passed, 14 warnings in 2.74s;
+  - the same Modal app ran changed-file `pre-commit run --files ...`; yapf,
+    ruff, codespell, PyMarkdown, mypy, filename-space, and suggestion hooks
+    passed.
+- Final GitHub refresh before commit: identity remained `macthecadillac`;
+  issue #775 stayed open and assigned with two unchanged comments; no targeted
+  open PR matched issue 775/TDM/the branch; remote `issue/775-tdm` remained at
+  reviewed commit `ddfa9732d`.
+- Next: commit the implementation/tests/docs/handoff with GPG signing, verify
+  the signature, and push `issue/775-tdm` immediately. No PR will be opened.

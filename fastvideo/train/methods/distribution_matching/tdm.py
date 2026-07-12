@@ -843,11 +843,12 @@ class TDMMethod(DMD2Method):
                     dim=reduce_dims,
                     keepdim=True,
                 )
-                delta = delta / denom.clamp_min(self._sigma_eps)
             target_delta = torch.nan_to_num(delta)
             target = generator_pred_x0.detach() + target_delta
 
         loss = self._generator_elementwise_loss(generator_pred_x0, target)
+        if self._normalize_generator_delta:
+            loss = loss / denom.clamp_min(self._sigma_eps)
         batch.dmd_latent_vis_dict.update({
             "dmd_timestep": target_timestep.float().detach(),
             "generator_timestep": source_timestep.float().detach(),

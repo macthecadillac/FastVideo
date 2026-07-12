@@ -11,6 +11,8 @@ from torch.testing import assert_close
 
 import fastvideo.train.callbacks.validation as validation_module
 from fastvideo.api.sampling_param import SamplingParam
+from fastvideo.models.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
+from fastvideo.pipelines.stages.denoising import DmdDenoisingStage
 from fastvideo.train.callbacks.validation import ValidationCallback
 from fastvideo.train.methods.distribution_matching.tdm import TDMMethod
 from fastvideo.train.models.wan import WanModel
@@ -20,6 +22,12 @@ from fastvideo.train.utils.config import load_run_config
 
 _TDM_CONFIG = "examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml"
 _WAN_DMD_PIPELINE = "fastvideo.pipelines.basic.wan.wan_dmd_pipeline.WanDMDPipeline"
+
+
+class _DenoisingStageTransformerStub(torch.nn.Module):
+
+    hidden_size = 128
+    num_attention_heads = 8
 
 
 def _patch_lightweight_wan(monkeypatch) -> None:
@@ -67,6 +75,34 @@ def test_wan_tdm_example_builds_method_with_pipeline_scheduler_shift(monkeypatch
         8.0 * 0.25 / (1.0 + 7.0 * 0.25),
     ])
     assert_close(sigmas, expected)
+
+
+def test_wan_tdm_training_and_validation_use_same_shifted_model_labels(monkeypatch) -> None:
+    _patch_lightweight_wan(monkeypatch)
+    cfg = load_run_config(_TDM_CONFIG)
+    training_config, method, _, _ = build_from_config(cfg)
+    assert isinstance(method, TDMMethod)
+    assert training_config.pipeline_config is not None
+
+    raw_steps = torch.tensor(method.method_config["tdm_denoising_steps"])
+    training_sigmas = method._timestep_to_sigma(raw_steps)
+    training_labels = method._model_timestep_for_sigma(training_sigmas, method.student)
+    scheduler = FlowMatchEulerDiscreteScheduler(shift=training_config.pipeline_config.flow_shift)
+    stage = DmdDenoisingStage(
+        transformer=_DenoisingStageTransformerStub(),
+        scheduler=scheduler,
+    )
+
+    validation_labels = stage._set_dmd_timesteps(
+        raw_steps,
+        device=torch.device("cpu"),
+        scheduler_space=training_config.pipeline_config.dmd_denoising_steps_are_scheduler_space,
+    )
+
+    assert training_config.pipeline_config.dmd_denoising_steps_are_scheduler_space is False
+    assert_close(validation_labels, training_labels)
+    assert_close(scheduler.sigmas[:-1], training_sigmas)
+    assert validation_labels[1].item() > 900.0
 
 
 class _FakeWanDMDPipeline:
@@ -144,4 +180,5 @@ def test_wan_tdm_validation_propagates_sampling_timesteps_to_dmd_pipeline(monkey
     assert inference_args.pipeline_config.dmd_denoising_steps == [1000, 750, 500, 250]
     assert inference_args.pipeline_config.dmd_sample_type == "ode"
     assert inference_args.pipeline_config.flow_shift == 8
+    assert inference_args.pipeline_config.dmd_denoising_steps_are_scheduler_space is False
     assert _FakeWanDMDPipeline.from_pretrained_kwargs["flow_shift"] == 8.0
