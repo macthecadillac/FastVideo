@@ -2362,3 +2362,39 @@ Under `.agents/k8s/`:
   launched. Continue with static/pre-commit validation, signed commit/push,
   then the required fresh Stage 3 review/adjudication loop before reporting the
   updated plan.
+
+
+### Fresh Stage 3 Review After K8s Corrections
+
+- Signed implementation commit `a0f20d1b7` was pushed to
+  `origin/issue/775-tdm`; signature verified good from
+  `Mac Lee <macthecadillac@gmail.com>`.
+- Full `uvx pre-commit run --all-files` on exact commit `a0f20d1b7` in clean
+  underscore-path clone `/tmp/fastvideo_worktrees/issue_775_k8s_precommit_a0f20d1b7`
+  passed yapf, ruff, codespell, PyMarkdown, actionlint, mypy, filename-space,
+  and suggestion hooks.
+- Fresh review-code agent `019f552a-e5e8-7263-9f85-add02fce6fdd`
+  (`Newton`) reviewed `macthecadillac/FastVideo issue/775-tdm` at
+  `a0f20d1b7` for issue #775 and reported six actionable findings:
+  1. High: `train_batch_size=4` is per rank, so four ranks make global batch
+     16 rather than the intended global batch 4. Use per-rank batch 1 and add
+     a preflight assertion.
+  2. High: JSONL tracking is not explicitly enabled; empty tracker config
+     auto-selects W&B, while output validation requires `tracker/metrics.jsonl`.
+  3. High: zero-step student inference uses the training output directory and
+     inherited checkpoint saving/retention, which can save checkpoint-0 and
+     delete older training checkpoints. Disable saves or use scratch output.
+  4. High: JSONL serializes nonfinite floats as a
+     `{"_type":"nonfinite_float",...}` marker, which the numeric-only output
+     validator currently misses.
+  5. Medium: a retained evicted/Failed pod is not recreated because recreation
+     only handles a missing pod; later exec fails against the terminal pod.
+  6. Medium: eviction during checkpoint writing can leave metadata and a DCP
+     directory before save completion, while resume-from-latest can select that
+     incomplete checkpoint.
+- Reviewer validation gaps: no workload was launched; recommended checks after
+  fixes are a four-rank batch assertion, JSONL/nonfinite integration, incomplete
+  checkpoint recovery, and zero-step inference checkpoint-tree preservation.
+- Per Stage 3, pass these findings without parent interpretation to a fresh
+  adjudicator/fixer for independent acceptance/rejection and any accepted
+  code fixes. No K8s workload has been launched.
