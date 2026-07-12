@@ -2785,5 +2785,14 @@ For model/pipeline changes, also check:
     2.24s;
   - the same Modal app ran changed-file `pre-commit run --files ...`; yapf,
     ruff, codespell, mypy, filename-space, and suggestion hooks passed.
-- Next: refresh GitHub state, sign, commit, verify the signature, and push
-  immediately. No PR will be opened.
+- Final GitHub refresh before commit: identity remained `macthecadillac`;
+  issue #775 stayed open and assigned with unchanged comments; targeted open PR
+  search remained empty.
+- Signed implementation/test/handoff commit
+  `f7b70af8e2d515a17d3207313c2b1ae34b1b86c0`
+  `[fix]: preserve TDM schedule and batch scaling` was pushed immediately to
+  `origin/issue/775-tdm`. `git log -1 --show-signature` reported a good
+  signature from `Mac Lee <macthecadillac@gmail.com>` using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887`.
+- Both reviewer findings are accepted and corrected. No finding was rejected,
+  no PR was opened, and no GitHub issue or PR state was modified.
