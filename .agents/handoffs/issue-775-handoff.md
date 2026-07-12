@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-12 final review handoff correction on issue/775-tdm
+Last updated: 2026-07-12 Kubernetes Python runtime repair on issue/775-tdm
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -3054,3 +3054,40 @@ For model/pipeline changes, also check:
   handoff still described signing as blocked and the commit as nonexistent.
   The finding was accepted and corrected in a handoff-only follow-up; no code,
   tests, launch scripts, or runtime behavior changed. No pod or PR was opened.
+
+## 2026-07-12 Kubernetes Python Runtime Repair
+
+- GPG signing recovered. Handoff-only commit
+  `6f23f5fe18a50e32be998b5431c22d2f45ba6a4f`
+  (`[docs]: correct issue 775 final status`) has a verified good signature
+  from Mac Lee using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887` and is pushed to
+  `origin/issue/775-tdm`.
+- The approved test launch used run
+  `tdm-bsz4-500-k8s-20260712141325` at that exact commit. Its CPU staging
+  pod reached the container command but failed before repository checkout with
+  `bash: line 9: python3: command not found`. The four-GB200 pod was never
+  created. The failed staging pod was deleted.
+- Image probes identified the cause: the image's `/opt/venv/bin/python*`
+  symlinks resolve into `/root/.local/share/uv/python`, while the workload
+  intentionally runs as UID/GID 1000 and `/root` is mode 0700.
+- A live CPU-only probe validated the minimal non-root repair:
+  - a root init container copies the CPython 3.12 ARM64 runtime and venv
+    executables into two `emptyDir` volumes;
+  - the main container mounts those volumes at `/opt/uv-python/cpython` and
+    `/opt/venv/bin`, remains UID/GID 1000, and prefixes `/opt/venv/bin` to
+    `PATH`;
+  - `python3`, `torchrun`, PyTorch, and `huggingface_hub` all loaded
+    successfully; the probe reported PyTorch `2.12.0+cu130` and CUDA `13.0`.
+- Applied that validated init-container and mount pattern to both
+  `.agents/k8s/stage-pod.yaml` and `.agents/k8s/pod.yaml`. The existing
+  non-root security context for staging and training remains unchanged.
+- Post-edit checks completed:
+  - `git diff --check` passed;
+  - the Kubernetes API server accepted rendered server-side dry-runs for both
+    corrected manifests;
+  - `kubectl -n vllm get pods -l issue=775` reported no resources after all
+    temporary image/runtime probes and the failed staging pod were deleted.
+- Next: sign, commit, and push the manifest correction; run the exact committed
+  head through full pre-commit and a tightly scoped fresh review cycle; then
+  launch a fresh run name pinned to that reviewed commit. Do not open a PR.

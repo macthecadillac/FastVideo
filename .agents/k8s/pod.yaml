@@ -19,6 +19,35 @@ spec:
     runAsUser: 1000
     runAsGroup: 1000
     runAsNonRoot: true
+  initContainers:
+    - name: prepare-python-runtime
+      image: ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+        allowPrivilegeEscalation: false
+      command: ["bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          RUNTIME_SOURCE=$(find /root/.local/share/uv/python \
+              -mindepth 1 -maxdepth 1 -type d \
+              -name 'cpython-3.12.*-linux-aarch64-gnu' -print -quit)
+          [[ -n "$RUNTIME_SOURCE" ]]
+          cp -a "$RUNTIME_SOURCE/." /runtime/cpython/
+          cp -a /opt/venv/bin/. /runtime/venv-bin/
+          for name in python python3 python3.12; do
+              ln -sfn /opt/uv-python/cpython/bin/python3.12 \
+                  "/runtime/venv-bin/$name"
+          done
+          chmod -R a+rX /runtime/cpython /runtime/venv-bin
+      volumeMounts:
+        - name: python-runtime
+          mountPath: /runtime/cpython
+        - name: venv-bin
+          mountPath: /runtime/venv-bin
   containers:
     - name: main
       image: ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest
@@ -46,6 +75,8 @@ spec:
           memory: 896Gi
           ephemeral-storage: 400Gi
       env:
+        - name: PATH
+          value: "/opt/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         - name: HF_TOKEN
           valueFrom:
             secretKeyRef:
@@ -87,6 +118,10 @@ spec:
           mountPath: /dev/shm
         - name: cache-tmp
           mountPath: /tmp
+        - name: python-runtime
+          mountPath: /opt/uv-python/cpython
+        - name: venv-bin
+          mountPath: /opt/venv/bin
   volumes:
     - name: workspace
       persistentVolumeClaim:
@@ -98,3 +133,7 @@ spec:
     - name: cache-tmp
       emptyDir:
         sizeLimit: 200Gi
+    - name: python-runtime
+      emptyDir: {}
+    - name: venv-bin
+      emptyDir: {}
