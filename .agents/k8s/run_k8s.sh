@@ -12,18 +12,23 @@ KUBECONFIG="${KUBECONFIG:-/home/sandbox/.kube/config}"
 export KUBECONFIG
 K8S_NAMESPACE="${K8S_NAMESPACE:-vllm}"
 BRANCH="${BRANCH:-issue/775-tdm}"
-COMMIT="${COMMIT:-$(git rev-parse "origin/${BRANCH}")}"
+COMMIT="${COMMIT:?COMMIT must be set to the approved full 40-character commit SHA}"
+if [[ ! "${COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: COMMIT must be a full lowercase 40-character commit SHA" >&2
+    exit 1
+fi
 RUN_NAME="${RUN_NAME:-tdm-bsz4-500-k8s-$(date +%s)}"
 POD_NAME="${POD_NAME:-${RUN_NAME}}"
 STAGE_POD_NAME="${STAGE_POD_NAME:-${POD_NAME}-stage}"
 PVC_NAME="${PVC_NAME:-lustre-pvc-vllm}"
 POLL_SECONDS="${POLL_SECONDS:-90}"
 STAGE_TIMEOUT_SECONDS="${STAGE_TIMEOUT_SECONDS:-86400}"
+CACHE_PROBE_TIMEOUT_SECONDS="${CACHE_PROBE_TIMEOUT_SECONDS:-60}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:-${WORKSTATION_ROOT}/outputs/issue-775-tdm/k8s/${RUN_NAME}}"
 POD_OUTPUT_ROOT="/workspace/run/issue-775/${RUN_NAME}"
 SHARED_HF_HOME="/workspace/run/issue-775/shared-cache/hf"
 
-for command in kubectl git python3 tar; do
+for command in awk kubectl git python3 tar timeout; do
     command -v "${command}" >/dev/null 2>&1 || {
         echo "ERROR: required command '${command}' not found" >&2
         exit 1
@@ -84,6 +89,7 @@ done
 echo "=== Applying CPU-only staging pod ==="
 kubectl apply -f "${STAGE_MANIFEST}"
 
+stage_deadline=$(( $(date +%s) + STAGE_TIMEOUT_SECONDS ))
 poll_start=$(date +%s)
 poll_deadline=$(( poll_start + POLL_SECONDS ))
 samples=()
@@ -99,9 +105,23 @@ while (( $(date +%s) < poll_deadline && ${#samples[@]} < 5 )); do
     fi
     size=0
     if [[ "${phase}" == "Running" ]]; then
-        size=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${STAGE_POD_NAME}" -- \
-            du -sb "${SHARED_HF_HOME}" 2>/dev/null | awk '{print $1}' || echo 0)
-        size=${size:-0}
+        stage_remaining=$(( stage_deadline - $(date +%s) ))
+        if (( stage_remaining <= 0 )); then
+            echo "ERROR: staging exceeded ${STAGE_TIMEOUT_SECONDS}s" >&2
+            exit 1
+        fi
+        probe_timeout=${CACHE_PROBE_TIMEOUT_SECONDS}
+        if (( stage_remaining < probe_timeout )); then
+            probe_timeout=${stage_remaining}
+        fi
+        if probe_output=$(timeout --signal=KILL "${probe_timeout}s" \
+            kubectl --namespace "${K8S_NAMESPACE}" exec "${STAGE_POD_NAME}" -- \
+            du -sb "${SHARED_HF_HOME}" 2>/dev/null); then
+            size=${probe_output%%[[:space:]]*}
+            size=${size:-0}
+        else
+            echo "WARN: cache-size probe failed or exceeded ${probe_timeout}s" >&2
+        fi
     fi
     elapsed=$(( $(date +%s) - poll_start ))
     printf '    t=%3ds phase=%-9s cache_bytes=%s\n' "${elapsed}" "${phase}" "${size}"
@@ -127,7 +147,6 @@ if (( ${#samples[@]} >= 2 )); then
 fi
 
 echo "=== Waiting for staging completion ==="
-stage_deadline=$(( $(date +%s) + STAGE_TIMEOUT_SECONDS ))
 while true; do
     phase=$(kubectl --namespace "${K8S_NAMESPACE}" get pod "${STAGE_POD_NAME}" \
         -o jsonpath='{.status.phase}' 2>/dev/null || echo Missing)

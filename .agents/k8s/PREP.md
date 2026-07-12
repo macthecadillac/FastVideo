@@ -50,7 +50,8 @@ CPU-only staging pod that:
 
 1. Verifies the FastVideo image starts on ARM64 and imports Torch.
 2. Verifies UID/GID 1000 can write the Lustre run directory.
-3. Idempotently checks out the exact branch commit from the public fork.
+3. Requires an explicitly approved full commit SHA, then idempotently checks
+   out that exact branch commit from the public fork.
 4. Downloads `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` into the shared cache.
 5. Downloads `FastVideo/Wan-Syn_77x448x832_600k` into the shared cache.
 6. Uses the exact path returned by `snapshot_download` for the training-data
@@ -118,6 +119,7 @@ Launch only after explicit approval:
 ```bash
 KUBECONFIG=/home/sandbox/.kube/config \
 K8S_NAMESPACE=vllm \
+COMMIT=<approved-full-40-character-commit-sha> \
 RUN_NAME=tdm-bsz4-500-k8s-<timestamp> \
     bash .agents/k8s/run_k8s.sh
 ```

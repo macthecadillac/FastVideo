@@ -2948,3 +2948,31 @@ For model/pipeline changes, also check:
   (`[fix]: avoid duplicate final checkpoint save`) has a verified good GPG
   signature from Mac Lee and was pushed to `origin/issue/775-tdm`. No PR was
   opened.
+
+## 2026-07-12 K8s Launcher Timeout And Commit Adjudication
+
+- User requested independent adjudication of two K8s reviewer findings against
+  exact commit `b04c096c7487b53f1cb1ca90abad221dbb4f27a4`, with no pod launch,
+  no PR, and no inspection or changes to unrelated algorithm code.
+- Dedicated worktree `/tmp/fastvideo-worktrees/issue-775-tdm` was clean and
+  synced locally/remotely at the reviewed commit. `gh` identity was verified as
+  `macthecadillac`; issue #775 remains open and assigned with two unchanged
+  comments, and no open PR matches issue 775.
+- Accepted both findings:
+  1. The recursive cache-size `du` ran through `kubectl exec` without a bound,
+     and the staging deadline was initialized only after the probe loop.
+  2. The launcher defaulted `COMMIT` from an unfetched local `origin` branch
+     ref, while the documented launch omitted `COMMIT`.
+- Minimal corrections applied:
+  - start the staging deadline immediately after applying the CPU pod, cap each
+    cache probe by both a 60-second probe timeout and the remaining staging
+    budget, and retain the same deadline for the completion wait;
+  - require an explicit full lowercase 40-character `COMMIT` before any
+    cluster access or manifest rendering, and document the required launch
+    input in `PREP.md`.
+- Static-only validation completed: `bash -n .agents/k8s/run_k8s.sh` and
+  `git diff --check` passed. Changed-file `pre-commit run --files` passed the
+  filename hook; all language/document hooks were excluded or had no files to
+  check. Focused source assertions passed.
+- No pods or project tests were launched. Commit and push are pending; no PR
+  will be opened.
