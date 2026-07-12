@@ -17,11 +17,18 @@ SKIP_INFERENCE="${SKIP_INFERENCE:-0}"
 SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 RERUN_INFERENCE="${RERUN_INFERENCE:-0}"
 RECREATE_POD="${RECREATE_POD:-1}"
+RECOVER_DEAD_TRAINING="${RECOVER_DEAD_TRAINING:-0}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:-${WORKSTATION_ROOT}/outputs/issue-775-tdm/k8s/${RUN_NAME}}"
 POD_OUTPUT_ROOT="/workspace/run/issue-775/${RUN_NAME}"
 POD_MANIFEST="${LOCAL_OUTPUT}/manifests/${POD_NAME}.yaml"
 POD_RECREATED=0
+RECOVERY_ATTEMPTED=0
 mkdir -p "${LOCAL_OUTPUT}"
+
+if [[ "${RECOVER_DEAD_TRAINING}" != "0" && "${RECOVER_DEAD_TRAINING}" != "1" ]]; then
+    echo "ERROR: RECOVER_DEAD_TRAINING must be 0 or 1" >&2
+    exit 1
+fi
 
 for command in kubectl python3 tar; do
     command -v "${command}" >/dev/null 2>&1 || {
@@ -118,6 +125,21 @@ EOF
 )"
     kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- bash -lc "${command}"
 }
+recover_dead_training() {
+    local reason=$1
+    local latest_checkpoint
+    if [[ "${RECOVER_DEAD_TRAINING}" != "1" || "${RECOVERY_ATTEMPTED}" == "1" ]]; then
+        return 1
+    fi
+    latest_checkpoint=$(latest_complete_checkpoint)
+    if [[ -z "${latest_checkpoint}" ]]; then
+        echo "ERROR: ${reason}; no completed checkpoint is available for recovery" >&2
+        return 1
+    fi
+    echo "=== ${reason}; resuming from ${latest_checkpoint} ==="
+    launch_from_checkpoint "${latest_checkpoint}" || return 1
+    RECOVERY_ATTEMPTED=1
+}
 
 if (( POD_RECREATED == 1 )); then
     completed_status=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
@@ -144,18 +166,26 @@ while true; do
             cat "${TRAIN_DONE_FLAG}")
         echo "${status}"
         if [[ "${status}" != *"rc=0"* ]]; then
-            echo "ERROR: training finished unsuccessfully" >&2
-            kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-                tail -n 100 "${POD_OUTPUT_ROOT}/logs/train.log" || true
-            exit 1
+            if recover_dead_training "training completion marker reports failure"; then
+                continue
+            else
+                echo "ERROR: training finished unsuccessfully" >&2
+                kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+                    tail -n 100 "${POD_OUTPUT_ROOT}/logs/train.log" || true
+                exit 1
+            fi
         fi
         break
     fi
     if ! training_process_alive; then
-        echo "ERROR: training process is not alive and no completion status exists" >&2
-        kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-            tail -n 100 "${POD_OUTPUT_ROOT}/logs/train.launcher.out" || true
-        exit 1
+        if recover_dead_training "training process is dead without a completion marker"; then
+            continue
+        else
+            echo "ERROR: training process is not alive and no completion status exists" >&2
+            kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
+                tail -n 100 "${POD_OUTPUT_ROOT}/logs/train.launcher.out" || true
+            exit 1
+        fi
     fi
     pid=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
         cat "${TRAIN_PID_FILE}")

@@ -116,7 +116,8 @@ while (( $(date +%s) < poll_deadline && ${#samples[@]} < 5 )); do
         fi
         if probe_output=$(timeout --signal=KILL "${probe_timeout}s" \
             kubectl --namespace "${K8S_NAMESPACE}" exec "${STAGE_POD_NAME}" -- \
-            du -sb "${SHARED_HF_HOME}" 2>/dev/null); then
+            timeout --signal=KILL "${probe_timeout}s" \
+                du -sb "${SHARED_HF_HOME}" 2>/dev/null); then
             size=${probe_output%%[[:space:]]*}
             size=${size:-0}
         else

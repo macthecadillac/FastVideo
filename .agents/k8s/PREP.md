@@ -91,7 +91,10 @@ The training wrapper writes `.train_done` atomically with the torchrun return
 code. Every new-format checkpoint writes `.complete` only after DCP and RNG
 state barriers finish. `resume_k8s.sh` deletes retained terminal pod objects,
 recreates the GPU pod from the durable manifest, and resumes from the newest
-checkpoint carrying that marker. It refuses inference unless `rc=0`,
+checkpoint carrying that marker. If a detached training process dies while its
+sleeping pod remains Running, set `RECOVER_DEAD_TRAINING=1` to opt into one
+recovery attempt from the newest completed checkpoint; the default is to stop
+for inspection. It refuses inference unless `rc=0`,
 checkpoints 100 through 500 have matching metadata, DCP metadata, and
 completion markers, tracker steps 1 through 500 exist, and tracker values do
 not contain numeric nonfinite values or JSONL nonfinite markers. Loss before

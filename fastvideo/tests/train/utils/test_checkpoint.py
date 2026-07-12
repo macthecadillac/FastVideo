@@ -448,3 +448,18 @@ def test_save_final_dedupes_step_saved_on_interval(tmp_path: Path) -> None:
     mgr.save_final(step=500)
 
     assert calls == [500]
+
+
+def test_save_final_dedupes_terminal_resumed_step(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _make_checkpoint_dir(tmp_path, 500)
+    mgr = _make_manager(tmp_path, save_steps=100)
+    monkeypatch.setattr(mgr, "_build_states", lambda: {})
+    monkeypatch.setattr(checkpoint_utils.dcp, "load", lambda *args, **kwargs: None)
+    monkeypatch.setattr(checkpoint_utils, "_barrier", lambda: None)
+
+    assert mgr.maybe_resume(resume_from_checkpoint=str(tmp_path / "checkpoint-500")) == 500
+    calls = _record_save_calls(mgr)
+    mgr.save_final(step=500)
+
+    assert calls == []

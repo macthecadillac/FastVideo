@@ -2978,3 +2978,75 @@ For model/pipeline changes, also check:
   `4e6219e82bf3a7fb47bbab9d38ac50c3173beb59`
   (`[fix]: bound K8s staging launch inputs`) was verified with a good GPG
   signature from Mac Lee and pushed to `origin/issue/775-tdm`.
+## 2026-07-12 Four-Finding Adjudication At 15d12df5a
+
+- User requested adjudication of exactly four reviewer findings against exact
+  branch head `15d12df5aa6bbed49d2779f4bff314983d19cd58`, with no pod launch or PR.
+- Worktree `/tmp/fastvideo-worktrees/issue-775-tdm` was clean and synced to
+  `origin/issue/775-tdm`; `gh` identity verified as `macthecadillac`. Issue #775
+  remains open and assigned to `macthecadillac`; its two comments are unchanged
+  and no open PR matches `775 OR TDM`.
+- Independently accepted all four findings against committed code:
+  1. A successful terminal-step resume did not initialize `_last_saved_step`,
+     so the empty trainer loop's final save rewrote the completed checkpoint.
+  2. The cache-size probe timed out only local `kubectl`; pod-side `du` could
+     outlive the transport.
+  3. A Running sleep pod with dead or failed detached training had no explicit
+     recovery path.
+  4. `SequentialTracker.video()` returned only the first child artifact, so a
+     JSONL representation could be forwarded to W&B.
+- Scoped fixes in progress: initialize the resumed saved step and cover
+  terminal resume; retain the outer cache probe timeout and add the same
+  pod-side timeout; add disabled-by-default `RECOVER_DEAD_TRAINING=1` recovery
+  for one attempt from the latest completed checkpoint; create and resolve
+  per-child sequential artifacts with mixed JSONL/W&B coverage.
+- No TDM objective code was inspected or altered. No local project tests, pod,
+  Modal app, or PR was launched.
+- Validation after the fixes:
+  - `git diff --check`: passed.
+  - `bash -n .agents/k8s/run_k8s.sh .agents/k8s/resume_k8s.sh`: passed.
+  - `python3 -m py_compile` on the four changed Python/test files: passed.
+  - changed-file `pre-commit run --files ...`: yapf, ruff, codespell,
+    filename, and suggestion hooks passed; mypy did not start because the
+    required worktree basename `issue-775-tdm` is not a valid Python package
+    name. No local project tests were run.
+- Final GitHub refresh remained unchanged: issue open and assigned to
+  `macthecadillac`, two comments, and no matching open PR.
+- Next: GPG-sign the scoped commit, verify its signature, and immediately push
+  `issue/775-tdm`. No pod or PR action is authorized.
+
+### Four-Finding Patch Completion
+
+- The capped adjudicator accepted all four findings and staged the checkpoint,
+  K8s recovery, pod-side timeout, and per-backend tracker fixes, but its signing
+  attempt was interrupted. The parent agent inspected the complete staged diff
+  and took over validation and signing without starting another agent loop.
+- Local non-test validation passed: `git diff --check`, shell syntax for
+  `run_k8s.sh` and `resume_k8s.sh`, Python compilation, and applicable
+  changed-file pre-commit hooks. No local project tests were run.
+- Focused Modal L40S app `ap-Acqk8nPwmJnqDw7NeEDx04` checked out exact base
+  commit `15d12df5aa6bbed49d2779f4bff314983d19cd58`, applied the eight-file
+  local patch, and ran
+  `pytest fastvideo/tests/train/utils/test_checkpoint.py tests/local_tests/tdm/test_jsonl_tracker.py -q`:
+  `38 passed, 14 warnings in 2.56s`.
+- Final behavior:
+  - successful resume records the resumed checkpoint as already saved;
+  - cache probes have both workstation and pod-side hard timeouts;
+  - `RECOVER_DEAD_TRAINING=1` opts into one recovery from the latest completed
+    checkpoint when a sleeping pod outlives failed training;
+  - sequential trackers create and route backend-specific video artifacts.
+- Next: sign/commit/push the eight-file patch, run full pre-commit and
+  Kubernetes server-side dry-runs on the exact head, then launch the approved
+  CPU staging plan. Do not open a PR.
+
+- Final candidate validation before signing:
+  - full `uvx pre-commit run --all-files` passed, including mypy, after the
+    exact staged patch was applied to the established underscore-path clone;
+  - shell syntax passed for all issue-775 K8s scripts;
+  - Kubernetes server-side dry-run accepted both rendered CPU staging and
+    four-GB200 manifests;
+  - no pod was created by these dry-runs.
+- GPG signing is temporarily blocked by the hardware-backed signing agent
+  returning `Operation cancelled`. No unsigned commit was created. Retry only
+  after hardware authorization; launch remains blocked because it must pin a
+  signed exact commit.

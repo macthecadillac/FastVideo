@@ -382,6 +382,7 @@ class CheckpointManager:
         logger.info("Loading Phase 2 checkpoint from %s", resolved)
         dcp.load(states, checkpoint_id=str(resolved / "dcp"))
         _barrier()
+        self._last_saved_step = step
         logger.info("Checkpoint loaded; resuming from step=%s", step)
         return step
 

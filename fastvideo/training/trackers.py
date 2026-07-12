@@ -375,6 +375,23 @@ class JsonlTracker(BaseTracker):
         }
 
 
+@dataclass(frozen=True)
+class _SequentialArtifact:
+    values: tuple[Any | None, ...]
+
+
+def _artifact_for_tracker(value: Any, tracker_index: int) -> Any:
+    if isinstance(value, _SequentialArtifact):
+        return value.values[tracker_index]
+    if isinstance(value, dict):
+        return {key: _artifact_for_tracker(item, tracker_index) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_artifact_for_tracker(item, tracker_index) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_artifact_for_tracker(item, tracker_index) for item in value)
+    return value
+
+
 class SequentialTracker(BaseTracker):
     """A tracker that forwards logging calls to a sequence of trackers."""
 
@@ -398,8 +415,8 @@ class SequentialTracker(BaseTracker):
         self._timed_metrics = {}
 
     def log_artifacts(self, artifacts: dict[str, Any], step: int) -> None:
-        for tracker in self._trackers:
-            tracker.log_artifacts(artifacts, step)
+        for tracker_index, tracker in enumerate(self._trackers):
+            tracker.log_artifacts(_artifact_for_tracker(artifacts, tracker_index), step)
         self._timed_metrics = {}
 
     def log_file(
@@ -422,11 +439,10 @@ class SequentialTracker(BaseTracker):
         fps: int | None = None,
         format: str | None = None,
     ) -> Any | None:
-        for tracker in self._trackers:
-            video = tracker.video(data, caption=caption, fps=fps, format=format)
-            if video is not None:
-                return video
-        return None
+        videos = tuple(tracker.video(data, caption=caption, fps=fps, format=format) for tracker in self._trackers)
+        if all(video is None for video in videos):
+            return None
+        return _SequentialArtifact(videos)
 
 
 class Trackers(str, Enum):

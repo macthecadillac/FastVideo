@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
+from typing import Any
 
 from fastvideo.training.trackers import initialize_trackers
 
@@ -66,3 +68,65 @@ def test_jsonl_tracker_writes_metrics_artifacts_and_files(tmp_path: Path) -> Non
     assert (tmp_path / "tracker" / "config.json").is_file()
     saved_run = tmp_path / "tracker" / "files" / "run.yaml"
     assert saved_run.read_text(encoding="utf-8") == "training: {}\n"
+
+
+class _FakeWandbRun:
+
+    def __init__(self) -> None:
+        self.logged: list[tuple[dict[str, Any], int]] = []
+
+    def log(self, metrics: dict[str, Any], step: int) -> None:
+        self.logged.append((metrics, step))
+
+    def finish(self) -> None:
+        pass
+
+
+class _FakeWandb:
+
+    def __init__(self) -> None:
+        self.run = _FakeWandbRun()
+
+    def init(self, **kwargs: Any) -> _FakeWandbRun:
+        return self.run
+
+    @staticmethod
+    def Video(data: Any, **kwargs: Any) -> tuple[str, Any, dict[str, Any]]:
+        return ("wandb-video", data, kwargs)
+
+    @staticmethod
+    def save(*args: Any, **kwargs: Any) -> None:
+        pass
+
+
+def test_sequential_tracker_creates_video_for_each_backend(
+        tmp_path: Path, monkeypatch: Any) -> None:
+    fake_wandb = _FakeWandb()
+    monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+    tracker = initialize_trackers(
+        ["jsonl", "wandb"],
+        experiment_name="test",
+        config=None,
+        log_dir=str(tmp_path / "tracker"),
+    )
+    video_path = tmp_path / "sample.mp4"
+
+    video = tracker.video(str(video_path), caption="prompt", fps=16)
+    tracker.log_artifacts({"validation": [video]}, step=7)
+
+    artifact_rows = _read_jsonl(tmp_path / "tracker" / "artifacts.jsonl")
+    assert artifact_rows[0]["artifacts"] == {
+        "validation": [{
+            "caption": "prompt",
+            "format": "mp4",
+            "fps": 16,
+            "path": str(video_path),
+        }]
+    }
+    assert fake_wandb.run.logged == [({
+        "validation": [("wandb-video", str(video_path), {
+            "caption": "prompt",
+            "format": "mp4",
+            "fps": 16,
+        })]
+    }, 7)]
