@@ -144,6 +144,8 @@ def test_wan_tdm_validation_propagates_sampling_timesteps_to_dmd_pipeline(monkey
     cfg = load_run_config(_TDM_CONFIG)
     validation_cfg = dict(cfg.callbacks["validation"])
     assert validation_cfg["pipeline_target"] == _WAN_DMD_PIPELINE
+    assert validation_cfg["offload_training_state"] is True
+    assert validation_cfg["unload_pipeline_after_validation"] is True
 
     def fake_resolve_target(target: str) -> type[_FakeWanDMDPipeline]:
         assert target == _WAN_DMD_PIPELINE
@@ -162,6 +164,8 @@ def test_wan_tdm_validation_propagates_sampling_timesteps_to_dmd_pipeline(monkey
     monkeypatch.setattr(SamplingParam, "from_pretrained", classmethod(lambda cls, model_path: cls()))
 
     callback = ValidationCallback(**validation_cfg)
+    assert callback.offload_training_state is True
+    assert callback.unload_pipeline_after_validation is True
     callback.training_config = cfg.training
     callback.rank_in_sp_group = 0
     callback.validation_random_generator = torch.Generator(device="cpu").manual_seed(0)

@@ -127,6 +127,8 @@ callbacks:
     max_grad_norm: 1.0
   validation:
     pipeline_target: fastvideo.pipelines.basic.wan.wan_dmd_pipeline.WanDMDPipeline
+    offload_training_state: true
+    unload_pipeline_after_validation: true
     dataset_file: examples/training/finetune/Wan2.1-VSA/Wan-Syn-Data/validation_4.json
     every_steps: 50
     sampling_steps: [4]

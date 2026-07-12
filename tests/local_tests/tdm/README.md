@@ -48,6 +48,19 @@ x0_hat = x_sigma - sigma * model_output
 The diffusion alpha-bar math from the reference is intentionally not used in
 production code.
 
+The generator update preserves the reference's three noise levels for each
+sample: the student predicts at the source sigma, its effective flow noise
+reconstructs a cleaner intermediate, and fresh noise moves that reconstruction
+to a score target between the intermediate and source sigmas. Source,
+intermediate, and target points are sampled independently per batch element.
+
+Periodic validation loads a separate inference pipeline while the student,
+teacher, and critic exist. The shipped recipe therefore offloads training state
+during validation and unloads the inference pipeline afterward. Checkpoint-only
+training can disable periodic validation with
+`callbacks.validation.every_steps=0` and validate exported checkpoints in a
+separate inference job.
+
 ## Test Scope
 
 ```bash

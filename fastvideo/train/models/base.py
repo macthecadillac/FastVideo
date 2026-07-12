@@ -170,10 +170,13 @@ class ModelBase(ABC):
             cfg_uncond=cfg_uncond,
             attn_kind=attn_kind,
         )
+        conversion_timestep = timestep
+        if (timestep.ndim == 1 and timestep.numel() == noisy_latents.shape[0] and noisy_latents.shape[1] > 1):
+            conversion_timestep = timestep.reshape(-1, 1).expand(-1, noisy_latents.shape[1])
         return pred_noise_to_pred_video(
             pred_noise=pred_noise.flatten(0, 1),
             noise_input_latent=noisy_latents.flatten(0, 1),
-            timestep=timestep,
+            timestep=conversion_timestep,
             scheduler=self.noise_scheduler,
         ).unflatten(0, pred_noise.shape[:2])
 

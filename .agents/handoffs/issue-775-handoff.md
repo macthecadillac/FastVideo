@@ -2855,3 +2855,73 @@ For model/pipeline changes, also check:
   `99C0619273F09B8BF8F3AC64C943F92E5C32D887`.
 - Both reviewer findings were accepted and corrected. No finding was rejected,
   no PR was opened, and no GitHub issue or PR state was modified.
+
+## 2026-07-12 Independent Three-Point Schedule And Validation-Memory Adjudication
+
+- User requested independent adjudication of three reviewer findings against
+  issue #775, official Luo-Yihong/TDM commit
+  `81b019f91539948d49da86cef12ccc64030c5022`, and FastVideo commit
+  `40f72af7bce5e0fca1e52404b8bad9666595abd5`.
+- Dedicated worktree: `/tmp/fastvideo-worktrees/issue-775-tdm` on
+  `issue/775-tdm`, initially clean and synced locally/remotely at the
+  reviewed commit.
+- Verified `gh` identity `macthecadillac`. Issue #775 remains open and
+  assigned to `macthecadillac`; both comments are unchanged and contain no
+  proposed fix; no open PR matches issue 775 or TDM.
+- Independently accepted all three findings:
+  1. Official generator lines 1141-1163 select a noisy source prediction,
+     reconstruct a cleaner intermediate, and re-noise to a score target
+     satisfying intermediate <= target < source. FastVideo collapsed source
+     and intermediate and therefore updated a prediction at the wrong point.
+  2. Official line 1141 and the following loops sample source, intermediate,
+     and target per batch element. FastVideo shared one scalar interval across
+     the batch and consequently also collapsed per-sample SNR weights.
+  3. The shipped recipe validates every 50 steps while both validation memory
+     controls default false even though TDM keeps student, teacher, and critic
+     resident.
+- Implemented corrections, pending Modal validation:
+  - sample source trajectory indices independently for each batch element;
+  - sample intermediate and target scheduler points per element, preserving
+    the configured separate/to-terminal upper-bound behavior;
+  - recompute the gradient-bearing student prediction at the source, recover
+    effective flow noise, reconstruct the intermediate, and transition from
+    intermediate to target before teacher/critic scoring;
+  - apply clipped flow SNR independently per sample;
+  - enable `offload_training_state` and
+    `unload_pipeline_after_validation` in the shipped Wan TDM recipe;
+
+### Three-Point Patch Completion
+
+- The initial focused Modal run `ap-NhpcUzNpPJt9dclhGkiz0m` reported
+  `29 passed, 5 failed`. All five failures exposed the same batch-shape
+  defect: per-sample model labels needed separate handling for transformer
+  input and x0 conversion after the latent prefix is flattened.
+- Stopped the looping adjudicator and completed the patch in the issue
+  worktree. The final implementation:
+  - samples source, optional intermediate, and score-target points per sample;
+  - predicts the gradient-bearing x0 at the noisy source, reconstructs the
+    cleaner intermediate, and re-noises to the score target;
+  - preserves the configured separate versus to-terminal target upper bound;
+  - applies fake-score SNR and importance weights per sample;
+  - passes one model label per sample to each transformer while expanding it
+    only for x0 conversion across the flattened latent prefix;
+  - synchronizes `TrainingBatch.timesteps` and saved backward contexts with
+    each actual student or critic call;
+  - enables both validation memory controls in the shipped recipe and documents
+    checkpoint-only validation.
+- Local non-test checks passed after formatting: `git diff --check` and
+  `python3 -m py_compile` for all changed Python files. No local project tests
+  were run.
+- Focused Modal L40S app `ap-JdBlMTR52gDvMGdC9YhSVi` checked out exact base
+  commit `40f72af7bce5e0fca1e52404b8bad9666595abd5`, applied the seven-file
+  local patch, and ran
+  `pytest tests/local_tests/tdm/ fastvideo/tests/train/methods/test_tdm_config_path.py -q`:
+  `34 passed, 14 warnings in 2.68s`.
+- Changed-file pre-commit formatted the two implementation files; ruff,
+  codespell, filename-space, and suggestion hooks passed. The mypy hook could
+  not start in the hyphenated worktree because `issue-775-tdm` is not a valid
+  package name. Run full pre-commit on the exact commit in the established
+  underscore-path validation clone before the final review.
+- Next: sign/commit/push this completed patch, run full pre-commit on the exact
+  commit, and resume the mandatory fresh review cycle. Do not open a PR or
+  launch Kubernetes until that cycle is clean.
