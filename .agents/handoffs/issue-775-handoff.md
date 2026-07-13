@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-12 reviewed Kubernetes staging launch on issue/775-tdm
+Last updated: 2026-07-13 Kubernetes staging transfer stall on issue/775-tdm
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -3121,4 +3121,36 @@ For model/pipeline changes, also check:
   staging succeeds, then runs the four-rank preflight and starts detached
   500-step training. Planning estimate remains 5-7 hours staging plus
   21-34 hours training/preflight/inference, or about 27-42 hours total.
+- No PR was opened.
+
+## 2026-07-13 Kubernetes Staging Transfer Stall
+
+- Resumed after the user reported the dataset progress had remained at
+  `1109/13878` for two hours. GitHub was rechecked with `gh` authenticated as
+  `macthecadillac`: issue #775 remains open and assigned, its two comments are
+  unchanged and contain no proposed fix, and no matching open PR appeared.
+- The local `/tmp` issue worktree and detached launcher state had been wiped,
+  consistent with a workstation restart or temporary-storage cleanup. The
+  Kubernetes staging pod survived independently, but no workstation launcher
+  remains to create the GB200 pod after staging. Recreated the dedicated
+  worktree at `/tmp/fastvideo-worktrees/issue-775-tdm` from the existing
+  `issue/775-tdm` branch.
+- Live pod state at approximately `2026-07-13T05:06Z`:
+  - staging pod `tdm-bsz4-500-k8s-20260712144347-stage` remained Running on
+    `10.0.143.72`, age about 14 hours, with zero restarts;
+  - Python downloader PID 520 remained alive as UID/GID 1000 with 67 threads,
+    but was sleeping;
+  - shared cache size was `1,316,668,323,760` bytes with `20,416` files;
+  - the Xet log reached roughly 1 GB. Completed dataset blob activity stopped
+    around 03:32 UTC; the log later showed a 403 for an expired signed range at
+    04:53 UTC, a successful token/retrieval-URL refresh, and no subsequent
+    transfer activity.
+- A controlled 60-second sample confirmed a real stall: process `wchar`,
+  `write_bytes`, total cache bytes, and every open incomplete blob's size and
+  mtime were identical before and after the interval. This is not merely a
+  stale tqdm display or one large file completing slowly.
+- No pod or process was killed during diagnosis. Safest recovery is to restart
+  dataset `snapshot_download` against the same persistent Lustre cache, which
+  preserves completed blobs and allows incomplete blobs to resume or refetch,
+  then restore a durable supervisor for the staging-to-GB200 transition.
 - No PR was opened.
