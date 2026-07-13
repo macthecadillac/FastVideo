@@ -3198,3 +3198,49 @@ For model/pipeline changes, also check:
   the required fresh review/adjudication cycle, then invoke the reviewed commit
   with the existing run name and `RESTART_STAGING=1`. Verify cache writes resume
   and that the supervisor waits in-cluster; do not create a PR.
+
+### Scheduling-Gate Review Correction
+
+- The initial cluster-resident implementation was GPG-signed and pushed as
+  `99c85b56272f6f669d6afd79f876965c99ce8546`
+  (`[fix]: make K8s transition cluster-resident`). The signature is good from
+  Mac Lee using subkey `99C0619273F09B8BF8F3AC64C943F92E5C32D887`, and the
+  remote branch was verified at the exact commit.
+- A fresh review reported two actionable findings:
+  - `resume_k8s.sh` could create a GPU pod before staging finished; that pod
+    would fail on the missing marker, after which the supervisor could mistake
+    the terminal pod for a valid transition;
+  - the supervisor service account's namespace-wide pod create/delete access,
+    combined with a mutable ConfigMap and image, was an unnecessary privilege
+    boundary.
+- The independent adjudicator accepted both findings. It exceeded two bounded
+  waits without editing, so it was stopped and returned decisions only. No
+  adjudicator commit or push exists.
+- Corrected the architecture without generic pod creation:
+  - `run_k8s.sh` pre-creates the GPU pod with scheduling gate
+    `issue-775/staging`; gated resource requests do not enter scheduling;
+  - the supervisor Role can only get/patch that exact GPU pod and get/delete
+    that exact staging pod; the service-account-bearing image is pinned to the
+    digest already running successfully on the cluster;
+  - after verifying the atomic marker and exact commit, the supervisor removes
+    the gate through a merge patch and refuses terminal or mismatched pods;
+  - the recovery ConfigMap remains for operator-driven pod recreation but is no
+    longer mounted by the supervisor;
+  - early `resume_k8s.sh` calls exit without mutation while staging,
+    supervision, or the gate is active. Explicit post-staging recreation removes
+    the restored gate before waiting for readiness.
+- Exact correction validation:
+  - shell syntax and `git diff --check` passed;
+  - the live API accepted server-side dry-runs for the gated GPU pod, staging
+    pod, recovery ConfigMap, service account, exact-resource Role, RoleBinding,
+    and supervisor Job;
+  - a temporary gated four-GPU manifest stayed `Pending` with no assigned node
+    and retained `issue-775/staging`; the exact gate-removal patch was accepted
+    in server dry-run, the real pod remained gated, and the temporary pod was
+    deleted;
+  - the corrected early-resume path ran against the stalled live run, exited
+    without mutation, and a follow-up GET confirmed no GPU pod existed.
+- Next: pre-commit, signed commit/push, and one fresh review of the corrected
+  exact head. After review is clean, launch the existing run name with
+  `RESTART_STAGING=1`, then verify the new stage pod, supervisor, gated GPU pod,
+  persistent cache growth, and exact-resource RBAC. Do not open a PR.

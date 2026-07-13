@@ -120,6 +120,7 @@ kubectl apply --dry-run=server -f "${SUPERVISOR_MANIFEST}" >/dev/null
 echo "Server-side dry-run accepted staging, supervisor, and GPU resources."
 
 kubectl apply -f "${CONFIGMAP_MANIFEST}"
+kubectl apply -f "${POD_MANIFEST}"
 kubectl apply -f "${SUPERVISOR_MANIFEST}"
 kubectl apply -f "${STAGE_MANIFEST}"
 
@@ -131,8 +132,9 @@ Stage pod:      ${STAGE_POD_NAME}
 Supervisor Job: ${SUPERVISOR_JOB_NAME}
 GPU pod:        ${POD_NAME}
 
-The supervisor waits for an atomic stage marker for commit ${COMMIT},
-then creates the GPU pod. The GPU pod runs preflight and training itself.
+The GPU pod is held outside the scheduler by a staging gate. The supervisor
+waits for an atomic stage marker for commit ${COMMIT}, then removes that gate.
+The GPU pod runs preflight and training itself after scheduling.
 
 Monitor:
   kubectl --kubeconfig ${KUBECONFIG} -n ${K8S_NAMESPACE} get pods,jobs \

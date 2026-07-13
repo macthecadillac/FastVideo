@@ -43,6 +43,9 @@ Training pod:
 - `/dev/shm`: 64 GiB
 - `/tmp`: 200 GiB
 
+The training pod is created with a scheduling gate, so these requests do not
+enter scheduler accounting until staging has completed successfully.
+
 ## Staging and preflight
 
 `run_k8s.sh` validates all launch resources with client- and server-side
@@ -63,12 +66,14 @@ watchdog. If a downloader makes no filesystem writes for 20 minutes, staging
 terminates that attempt and retries against the same persistent cache, up to
 four attempts.
 
-A Kubernetes Job, using a service account limited to creating, reading, and
-deleting pods in the namespace, watches the atomic `.stage_done` marker. Only
-after the marker matches the approved commit does it create the four-GB200 pod.
-The Job and rendered GPU manifest are stored in the cluster, so workstation
-disconnects, restarts, and local `/tmp` cleanup cannot interrupt the
-transition. The GPU pod runs `run_preflight.sh` itself before starting
+A Kubernetes Job watches the atomic `.stage_done` marker. Its service account
+can only read and patch the exact gated GPU pod and read and delete the exact
+staging pod. It cannot create arbitrary namespace pods. The supervisor image is
+pinned by digest. Only after the marker
+matches the approved commit does the Job remove the GPU pod's scheduling gate.
+The Job, gated pod, and rendered recovery manifest are stored in the cluster,
+so workstation disconnects, restarts, and local `/tmp` cleanup cannot interrupt
+the transition. The GPU pod runs `run_preflight.sh` itself before starting
 training. Any failure prevents the 500-step process from starting.
 
 ## Training parameters
@@ -97,8 +102,11 @@ code. The GPU pod runs preflight and training itself, records its shell PID,
 and automatically resumes from the newest completed checkpoint when recreated.
 Every new-format checkpoint writes `.complete` only after DCP and RNG state
 barriers finish. `resume_k8s.sh` can restore a lost local GPU manifest from the
-launch ConfigMap before recreating the pod. If a detached training process dies
-while its sleeping pod remains Running, set `RECOVER_DEAD_TRAINING=1` to opt
+launch ConfigMap before recreating the pod. While staging or its supervisor is
+active, the helper exits without creating or releasing a GPU pod. A recreated
+post-staging pod has its restored scheduling gate removed explicitly. If a
+detached training process dies while its sleeping pod remains Running, set
+`RECOVER_DEAD_TRAINING=1` to opt
 into one recovery attempt from the newest completed checkpoint; the default is
 to stop for inspection. It refuses inference unless `rc=0`,
 checkpoints 100 through 500 have matching metadata, DCP metadata, and

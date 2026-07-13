@@ -11,6 +11,9 @@ export KUBECONFIG
 K8S_NAMESPACE="${K8S_NAMESPACE:-vllm}"
 : "${RUN_NAME:?ERROR: RUN_NAME must be set}"
 POD_NAME="${POD_NAME:-${RUN_NAME}}"
+STAGE_POD_NAME="${STAGE_POD_NAME:-${POD_NAME}-stage}"
+SUPERVISOR_JOB_NAME="${SUPERVISOR_JOB_NAME:-${POD_NAME}-supervisor}"
+STAGING_GATE="issue-775/staging"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-120}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-0}"
 SKIP_INFERENCE="${SKIP_INFERENCE:-0}"
@@ -41,6 +44,28 @@ pod_exists() {
     kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" \
         -o jsonpath='{.metadata.name}' 2>/dev/null
 }
+stage_exists() {
+    kubectl --namespace "${K8S_NAMESPACE}" get pod "${STAGE_POD_NAME}" \
+        -o name >/dev/null 2>&1
+}
+supervisor_is_active() {
+    local terminal_conditions
+    if ! kubectl --namespace "${K8S_NAMESPACE}" get job "${SUPERVISOR_JOB_NAME}" \
+        -o name >/dev/null 2>&1; then
+        return 1
+    fi
+    terminal_conditions=$(kubectl --namespace "${K8S_NAMESPACE}" \
+        get job "${SUPERVISOR_JOB_NAME}" \
+        -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}')
+    [[ "${terminal_conditions}" != *Complete* && \
+       "${terminal_conditions}" != *Failed* ]]
+}
+pod_is_staging_gated() {
+    local gates
+    gates=$(kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" \
+        -o jsonpath='{.spec.schedulingGates[*].name}' 2>/dev/null || true)
+    [[ " ${gates} " == *" ${STAGING_GATE} "* ]]
+}
 ensure_pod_manifest() {
     if [[ -s "${POD_MANIFEST}" ]]; then
         return
@@ -67,13 +92,26 @@ recreate_pod() {
     echo "=== Recreating GPU pod from durable manifest ==="
     kubectl apply --dry-run=server -f "${POD_MANIFEST}" >/dev/null
     kubectl apply -f "${POD_MANIFEST}"
+    kubectl --namespace "${K8S_NAMESPACE}" patch pod "${POD_NAME}" \
+        --type=merge \
+        --patch '{"spec":{"schedulingGates":[]}}'
     kubectl --namespace "${K8S_NAMESPACE}" wait --for=condition=Ready \
         "pod/${POD_NAME}" --timeout=15m
 }
 
 if [[ "$(pod_exists)" != "${POD_NAME}" ]]; then
+    if stage_exists || supervisor_is_active; then
+        echo "GPU pod ${POD_NAME} is absent while the cluster transition is active."
+        echo "No pod was recreated; inspect ${STAGE_POD_NAME} and ${SUPERVISOR_JOB_NAME}."
+        exit 0
+    fi
     recreate_pod
 else
+    if pod_is_staging_gated; then
+        echo "GPU pod ${POD_NAME} is safely gated while staging is incomplete."
+        echo "No cluster state was changed; rerun after the supervisor releases it."
+        exit 0
+    fi
     pod_phase=$(kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" \
         -o jsonpath='{.status.phase}')
     case "${pod_phase}" in

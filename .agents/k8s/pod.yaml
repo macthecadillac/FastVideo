@@ -13,6 +13,8 @@ metadata:
     issue: "775"
 spec:
   restartPolicy: Never
+  schedulingGates:
+    - name: issue-775/staging
   nodeSelector:
     node.kubernetes.io/instance-type: BM.GPU.GB200.4
   securityContext:
