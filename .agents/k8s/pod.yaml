@@ -60,8 +60,44 @@ spec:
           [[ -d "${POD_OUTPUT_ROOT}/repo/.git" ]]
           [[ -L "${POD_OUTPUT_ROOT}/repo/data/Wan-Syn_77x448x832_600k" ]]
           mkdir -p "${POD_OUTPUT_ROOT}/logs" "${POD_OUTPUT_ROOT}/output"
-          echo "Pod $(hostname) ready at $(date -u +%FT%TZ)"
+          cd "${POD_OUTPUT_ROOT}"
+          echo "Pod $(hostname) started at $(date -u +%FT%TZ)"
           echo "Output root: ${POD_OUTPUT_ROOT}"
+          echo "$$" > output/train.pid
+
+          if [[ ! -f preflight/.preflight_done ]]; then
+              echo "[pod] running four-GPU preflight"
+              bash repo/.agents/k8s/run_preflight.sh "${POD_OUTPUT_ROOT}" \
+                  > logs/preflight.launcher.out 2>&1
+          else
+              echo "[pod] preflight already complete"
+          fi
+
+          TRAIN_DONE=output/.train_done
+          if [[ -f "${TRAIN_DONE}" ]] && grep -Fq "rc=0" "${TRAIN_DONE}"; then
+              echo "[pod] training already complete"
+              exec sleep infinity
+          fi
+
+          LATEST_CHECKPOINT=$(find output -mindepth 2 -maxdepth 2 -type f \
+              -name .complete -path '*/checkpoint-*/*' -printf '%h\n' | \
+              sort -V | tail -n 1)
+          if [[ -z "${LATEST_CHECKPOINT}" && -s output/tracker/metrics.jsonl ]]; then
+              echo "ERROR: partial training has no completed checkpoint" >&2
+              exit 1
+          fi
+
+          if [[ -n "${LATEST_CHECKPOINT}" ]]; then
+              echo "[pod] resuming training from ${LATEST_CHECKPOINT}"
+              env RESUME_FROM_CHECKPOINT="${POD_OUTPUT_ROOT}/${LATEST_CHECKPOINT}" \
+                  bash repo/.agents/k8s/run_train.sh "${POD_OUTPUT_ROOT}" \
+                  > logs/train.launcher.out 2>&1
+          else
+              echo "[pod] starting 500-step training"
+              bash repo/.agents/k8s/run_train.sh "${POD_OUTPUT_ROOT}" \
+                  > logs/train.launcher.out 2>&1
+          fi
+          echo "[pod] training completed successfully"
           exec sleep infinity
       resources:
         requests:

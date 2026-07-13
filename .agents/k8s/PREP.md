@@ -1,7 +1,7 @@
 # Issue 775 TDM - corrected K8s batch-4 run plan
 
-Updated: 2026-07-12
-Status: implemented and awaiting separate launch approval
+Updated: 2026-07-13
+Status: implemented; each launch still requires explicit approval
 
 ## Goal
 
@@ -45,8 +45,8 @@ Training pod:
 
 ## Staging and preflight
 
-`run_k8s.sh` first server-side dry-runs both manifests. It then runs a
-CPU-only staging pod that:
+`run_k8s.sh` validates all launch resources with client- and server-side
+dry-runs. It then runs a CPU-only staging pod that:
 
 1. Verifies the FastVideo image starts on ARM64 and imports Torch.
 2. Verifies UID/GID 1000 can write the Lustre run directory.
@@ -58,13 +58,18 @@ CPU-only staging pod that:
    symlink under `repo/data/` and verifies a parquet file is present.
 7. Writes `.stage_done` only after every check succeeds.
 
-Only after staging succeeds does the driver create the four-GB200 pod. Before
-long training, `run_preflight.sh` requires exactly four CUDA devices, runs a
-four-rank NCCL all-reduce, and executes two real TDM steps with local batch
-size 1 on each of four data-parallel groups. It then checks the JSONL tracker's
-resolved run configuration and requires local batch 1, global batch 4, steps
-1 and 2, and no preflight checkpoints. Any failure leaves the pod available
-for inspection and prevents the 500-step process from starting.
+Both model and dataset downloads are cache-resuming and guarded by a no-write
+watchdog. If a downloader makes no filesystem writes for 20 minutes, staging
+terminates that attempt and retries against the same persistent cache, up to
+four attempts.
+
+A Kubernetes Job, using a service account limited to creating, reading, and
+deleting pods in the namespace, watches the atomic `.stage_done` marker. Only
+after the marker matches the approved commit does it create the four-GB200 pod.
+The Job and rendered GPU manifest are stored in the cluster, so workstation
+disconnects, restarts, and local `/tmp` cleanup cannot interrupt the
+transition. The GPU pod runs `run_preflight.sh` itself before starting
+training. Any failure prevents the 500-step process from starting.
 
 ## Training parameters
 
@@ -88,13 +93,14 @@ for inspection and prevents the 500-step process from starting.
 - W&B: disabled; durable JSONL tracker selected explicitly
 
 The training wrapper writes `.train_done` atomically with the torchrun return
-code. Every new-format checkpoint writes `.complete` only after DCP and RNG
-state barriers finish. `resume_k8s.sh` deletes retained terminal pod objects,
-recreates the GPU pod from the durable manifest, and resumes from the newest
-checkpoint carrying that marker. If a detached training process dies while its
-sleeping pod remains Running, set `RECOVER_DEAD_TRAINING=1` to opt into one
-recovery attempt from the newest completed checkpoint; the default is to stop
-for inspection. It refuses inference unless `rc=0`,
+code. The GPU pod runs preflight and training itself, records its shell PID,
+and automatically resumes from the newest completed checkpoint when recreated.
+Every new-format checkpoint writes `.complete` only after DCP and RNG state
+barriers finish. `resume_k8s.sh` can restore a lost local GPU manifest from the
+launch ConfigMap before recreating the pod. If a detached training process dies
+while its sleeping pod remains Running, set `RECOVER_DEAD_TRAINING=1` to opt
+into one recovery attempt from the newest completed checkpoint; the default is
+to stop for inspection. It refuses inference unless `rc=0`,
 checkpoints 100 through 500 have matching metadata, DCP metadata, and
 completion markers, tracker steps 1 through 500 exist, and tracker values do
 not contain numeric nonfinite values or JSONL nonfinite markers. Loss before
@@ -125,6 +131,16 @@ K8S_NAMESPACE=vllm \
 COMMIT=<approved-full-40-character-commit-sha> \
 RUN_NAME=tdm-bsz4-500-k8s-<timestamp> \
     bash .agents/k8s/run_k8s.sh
+```
+
+The command returns after submitting staging and its supervisor. For a
+confirmed staging-process stall, rerun the same command and run name with
+`RESTART_STAGING=1`; the existing pod is replaced while the shared Lustre
+cache is retained:
+
+```bash
+RESTART_STAGING=1 COMMIT=<approved-full-40-character-commit-sha> \
+RUN_NAME=<same-run-name> bash .agents/k8s/run_k8s.sh
 ```
 
 Reconnect, validate, infer, and download:

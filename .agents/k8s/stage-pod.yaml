@@ -93,32 +93,79 @@ spec:
           [[ "$(git -C repo rev-parse HEAD)" == "${COMMIT}" ]]
           echo "[stage] repo HEAD ${COMMIT}"
 
-          echo "[stage] staging Wan 2.1 T2V 1.3B"
-          MODEL_SNAPSHOT=$(python3 - <<'PYMODEL'
+          download_snapshot() {
+              local repo_id=$1
+              local repo_type=$2
+              local label=$3
+              local attempt current_write last_write pid result_file snapshot stagnant state
+              result_file="${POD_OUTPUT_ROOT}/.download-${label}.out"
+
+              for attempt in 1 2 3 4; do
+                  rm -f "${result_file}"
+                  echo "[stage] ${label} download attempt ${attempt}/4" >&2
+                  DOWNLOAD_REPO_ID="${repo_id}" DOWNLOAD_REPO_TYPE="${repo_type}" \
+                      python3 - <<'PYDOWNLOAD' > "${result_file}" &
           import os
           from huggingface_hub import snapshot_download
 
-          print(snapshot_download(
-              repo_id="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-              cache_dir=os.environ["HF_HUB_CACHE"],
-          ))
-          PYMODEL
-          )
+          kwargs = {
+              "repo_id": os.environ["DOWNLOAD_REPO_ID"],
+              "cache_dir": os.environ["HF_HUB_CACHE"],
+          }
+          if os.environ["DOWNLOAD_REPO_TYPE"]:
+              kwargs["repo_type"] = os.environ["DOWNLOAD_REPO_TYPE"]
+          print(snapshot_download(**kwargs), flush=True)
+          PYDOWNLOAD
+                  pid=$!
+                  stagnant=0
+                  last_write=$(awk '$1 == "write_bytes:" {print $2}' \
+                      "/proc/${pid}/io" 2>/dev/null || echo 0)
+
+                  while [[ -r "/proc/${pid}/status" ]]; do
+                      state=$(awk '$1 == "State:" {print $2}' \
+                          "/proc/${pid}/status" 2>/dev/null || true)
+                      [[ "${state}" != "Z" ]] || break
+                      sleep 30
+                      [[ -r "/proc/${pid}/io" ]] || break
+                      current_write=$(awk '$1 == "write_bytes:" {print $2}' \
+                          "/proc/${pid}/io" 2>/dev/null || echo 0)
+                      if [[ "${current_write}" =~ ^[0-9]+$ ]] &&
+                         (( current_write > last_write )); then
+                          last_write=${current_write}
+                          stagnant=0
+                      else
+                          ((stagnant += 1))
+                      fi
+                      if (( stagnant >= 40 )); then
+                          echo "WARN: ${label} made no filesystem writes for 20 minutes; restarting" >&2
+                          kill "${pid}" 2>/dev/null || true
+                          break
+                      fi
+                  done
+
+                  if wait "${pid}"; then
+                      snapshot=$(tail -n 1 "${result_file}")
+                      if [[ -d "${snapshot}" ]]; then
+                          printf '%s\n' "${snapshot}"
+                          return 0
+                      fi
+                  fi
+                  echo "WARN: ${label} attempt ${attempt} failed" >&2
+                  sleep 30
+              done
+              echo "ERROR: ${label} download failed after four attempts" >&2
+              return 1
+          }
+
+          echo "[stage] staging Wan 2.1 T2V 1.3B"
+          MODEL_SNAPSHOT=$(download_snapshot \
+              "Wan-AI/Wan2.1-T2V-1.3B-Diffusers" "" "model")
           [[ -d "${MODEL_SNAPSHOT}" ]]
           printf '%s\n' "${MODEL_SNAPSHOT}" > "${POD_OUTPUT_ROOT}/.model_snapshot"
 
           echo "[stage] staging Wan-Syn_77x448x832_600k"
-          DATASET_SNAPSHOT=$(python3 - <<'PYDATA'
-          import os
-          from huggingface_hub import snapshot_download
-
-          print(snapshot_download(
-              repo_id="FastVideo/Wan-Syn_77x448x832_600k",
-              repo_type="dataset",
-              cache_dir=os.environ["HF_HUB_CACHE"],
-          ))
-          PYDATA
-          )
+          DATASET_SNAPSHOT=$(download_snapshot \
+              "FastVideo/Wan-Syn_77x448x832_600k" "dataset" "dataset")
           [[ -d "${DATASET_SNAPSHOT}" ]]
           printf '%s\n' "${DATASET_SNAPSHOT}" > "${POD_OUTPUT_ROOT}/.dataset_snapshot"
 
@@ -140,7 +187,9 @@ spec:
               echo "commit=${COMMIT}"
               echo "model_snapshot=${MODEL_SNAPSHOT}"
               echo "dataset_snapshot=${DATASET_SNAPSHOT}"
-          } > "${POD_OUTPUT_ROOT}/.stage_done"
+          } > "${POD_OUTPUT_ROOT}/.stage_done.tmp"
+          mv "${POD_OUTPUT_ROOT}/.stage_done.tmp" \
+              "${POD_OUTPUT_ROOT}/.stage_done"
           echo "[stage] complete $(date -u +%FT%TZ)"
       env:
         - name: PATH

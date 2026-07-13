@@ -21,7 +21,7 @@ RECOVER_DEAD_TRAINING="${RECOVER_DEAD_TRAINING:-0}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:-${WORKSTATION_ROOT}/outputs/issue-775-tdm/k8s/${RUN_NAME}}"
 POD_OUTPUT_ROOT="/workspace/run/issue-775/${RUN_NAME}"
 POD_MANIFEST="${LOCAL_OUTPUT}/manifests/${POD_NAME}.yaml"
-POD_RECREATED=0
+SUPERVISOR_CONFIGMAP="${SUPERVISOR_CONFIGMAP:-${POD_NAME}-launch}"
 RECOVERY_ATTEMPTED=0
 mkdir -p "${LOCAL_OUTPUT}"
 
@@ -41,11 +41,25 @@ pod_exists() {
     kubectl --namespace "${K8S_NAMESPACE}" get pod "${POD_NAME}" \
         -o jsonpath='{.metadata.name}' 2>/dev/null
 }
-recreate_pod() {
-    if [[ "${RECREATE_POD}" != "1" || ! -f "${POD_MANIFEST}" ]]; then
-        echo "ERROR: pod cannot be recreated from ${POD_MANIFEST}" >&2
+ensure_pod_manifest() {
+    if [[ -s "${POD_MANIFEST}" ]]; then
+        return
+    fi
+    echo "=== Restoring GPU manifest from ConfigMap ${SUPERVISOR_CONFIGMAP} ==="
+    mkdir -p "$(dirname "${POD_MANIFEST}")"
+    kubectl --namespace "${K8S_NAMESPACE}" get configmap "${SUPERVISOR_CONFIGMAP}" \
+        -o jsonpath='{.data.pod\.json}' > "${POD_MANIFEST}"
+    if [[ ! -s "${POD_MANIFEST}" ]]; then
+        echo "ERROR: ConfigMap did not contain pod.json" >&2
         exit 1
     fi
+}
+recreate_pod() {
+    if [[ "${RECREATE_POD}" != "1" ]]; then
+        echo "ERROR: pod recreation is disabled" >&2
+        exit 1
+    fi
+    ensure_pod_manifest
     if [[ "$(pod_exists)" == "${POD_NAME}" ]]; then
         kubectl --namespace "${K8S_NAMESPACE}" delete pod "${POD_NAME}" \
             --wait=true --timeout=5m
@@ -55,7 +69,6 @@ recreate_pod() {
     kubectl apply -f "${POD_MANIFEST}"
     kubectl --namespace "${K8S_NAMESPACE}" wait --for=condition=Ready \
         "pod/${POD_NAME}" --timeout=15m
-    POD_RECREATED=1
 }
 
 if [[ "$(pod_exists)" != "${POD_NAME}" ]]; then
@@ -140,23 +153,6 @@ recover_dead_training() {
     launch_from_checkpoint "${latest_checkpoint}" || return 1
     RECOVERY_ATTEMPTED=1
 }
-
-if (( POD_RECREATED == 1 )); then
-    completed_status=$(kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-        cat "${TRAIN_DONE_FLAG}" 2>/dev/null || true)
-    if [[ "${completed_status}" != *"rc=0"* ]]; then
-        latest_checkpoint=$(latest_complete_checkpoint)
-        if [[ -z "${latest_checkpoint}" ]]; then
-            kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-                find "${POD_OUTPUT_ROOT}/output" -maxdepth 2 -type f -name metadata.json \
-                -print 2>/dev/null || true
-            echo "ERROR: no completed checkpoint is available after pod loss" >&2
-            exit 1
-        fi
-        echo "=== Pod was recreated; resuming from ${latest_checkpoint} ==="
-        launch_from_checkpoint "${latest_checkpoint}"
-    fi
-fi
 
 echo "=== Waiting for training completion ==="
 start_ts=$(date +%s)

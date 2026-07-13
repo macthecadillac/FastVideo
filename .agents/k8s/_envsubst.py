@@ -15,6 +15,9 @@ ALLOWED_SUBS = {
     "RUN_NAME",
     "SHARED_HF_HOME",
     "STAGE_POD_NAME",
+    "SUPERVISOR_CONFIGMAP",
+    "SUPERVISOR_JOB_NAME",
+    "SUPERVISOR_TIMEOUT_SECONDS",
 }
 
 src = sys.stdin.read()

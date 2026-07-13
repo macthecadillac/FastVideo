@@ -3154,3 +3154,47 @@ For model/pipeline changes, also check:
   preserves completed blobs and allows incomplete blobs to resume or refetch,
   then restore a durable supervisor for the staging-to-GB200 transition.
 - No PR was opened.
+
+## 2026-07-13 Cluster-Resident Staging Recovery
+
+- The user directed recovery of the stalled staging transfer and required the
+  staging-to-training transition to survive workstation network loss, restart,
+  and local `/tmp` cleanup. No PR is to be opened.
+- Implemented a cluster-resident transition:
+  - `supervisor.yaml` defines a dedicated service account, a namespace Role
+    limited to pod create/get/delete, its RoleBinding, and an ARM64 A2 Job;
+  - `run_k8s.sh` stores the fully rendered GPU pod JSON in a ConfigMap, creates
+    the supervisor Job, and returns after submitting CPU staging;
+  - the Job polls the durable Lustre `.stage_done` marker, requires the exact
+    approved commit, idempotently creates the four-GB200 pod through the
+    Kubernetes API, and removes the completed staging pod;
+  - the GPU pod runs four-rank preflight and 500-step training itself, and
+    resumes from the latest `.complete` checkpoint when recreated;
+  - `resume_k8s.sh` restores a missing local GPU manifest from the ConfigMap.
+- Hardened staging downloads around the observed Xet failure. Model and dataset
+  `snapshot_download` calls now reuse the persistent Hugging Face cache, retry
+  four times, and terminate an attempt after 20 minutes without process-level
+  filesystem writes. `.stage_done` is written through an atomic rename.
+- Corrected launcher validation ordering after a nonmutating test showed
+  server-side apply dry-run interpreting the replacement manifest as an illegal
+  update to the existing immutable PodSpec. Rendered resources are client-side
+  parsed first; existing-resource guards and approved replacement occur before
+  fresh server-side validation.
+- Validation completed without creating or deleting cluster resources:
+  - shell syntax passed for `run_k8s.sh`, `resume_k8s.sh`, `run_preflight.sh`,
+    `run_train.sh`, and the shell extracted from all three rendered manifests;
+  - Kubernetes client parsing accepted staging, GPU, ConfigMap, and supervisor
+    resources; server-side dry-runs accepted staging, GPU, ConfigMap, service
+    account, Role, RoleBinding, and Job resources when validated as creates;
+  - `git diff --check` passed;
+  - the live existing-pod guard exited with the intended
+    `set RESTART_STAGING=1 to replace it` error and made no mutation.
+- Live capacity refresh found four Ready A2 nodes and 30 Ready/schedulable
+  four-GPU GB200 nodes. Eight four-GPU pods are visible in `vllm`; cluster-wide
+  pod listing remains forbidden, so allocations in hidden namespaces cannot be
+  counted. The staging node reports no memory, disk, or PID pressure. Neither
+  scheduler nor GPU capacity is implicated in the transfer stall.
+- Next: run changed-file pre-commit, commit and push with GPG signing, complete
+  the required fresh review/adjudication cycle, then invoke the reviewed commit
+  with the existing run name and `RESTART_STAGING=1`. Verify cache writes resume
+  and that the supervisor waits in-cluster; do not create a PR.
