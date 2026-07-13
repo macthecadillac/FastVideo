@@ -3471,3 +3471,19 @@ For model/pipeline changes, also check:
 - Current cluster state: the four-GB200 pod is `Running 1/1` on
   `10.0.130.11`; the supervisor Job is complete; staging and all temporary
   recovery/diagnostic pods are absent. No PR was opened.
+
+### Final PID Review And Step-71 Status
+
+- The PID correction was GPG-signed and pushed as
+  `ff7b8d90de7b7e00b60783d28afaf5e5742d3d02`. A fresh exact-range
+  `review-code` agent reported no actionable findings; no adjudicator or code
+  change was needed.
+- Closed the reviewer's residual runtime-validation gap with a CPU-only pod
+  using the production image and `bash -lc`: Kubernetes preserved
+  `${BASHPID}`, the pod logged `bashpid=1`, and `kill -0` succeeded. The
+  temporary validation pod was deleted.
+- Final live sample: step 71, warm mean 12.33 seconds, median 12.29 seconds,
+  pod `Running 1/1` with zero restarts. Raw remaining compute is about 1h28m;
+  budget 1h35m-2h including checkpoint overhead and normal variance.
+- No PR was opened. The worktree is ready for monitoring while the cluster run
+  continues independently.
