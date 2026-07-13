@@ -39,6 +39,47 @@ def test_flow_transition_reconstructs_noisier_point_for_video_latents() -> None:
     assert torch.isfinite(beta).all()
 
 
+def test_flow_transition_preserves_near_terminal_sigma_precision_for_bfloat16() -> None:
+    clean = torch.zeros(1, 1, 1, 2, 2, dtype=torch.bfloat16)
+    eps_from = torch.ones_like(clean)
+    proposal = torch.zeros_like(clean)
+    sigma_from = torch.tensor([0.999])
+    sigma_to = torch.tensor([0.9995])
+    noisy_from = torch.ones_like(clean)
+
+    noisy_to, mixed_noise, beta = flow_transition_to_noisier_sigma(
+        noisy_from=noisy_from,
+        clean_latents=clean,
+        eps_from=eps_from,
+        sigma_from=sigma_from,
+        sigma_to=sigma_to,
+        proposal_noise=proposal,
+    )
+
+    assert noisy_to.dtype == torch.bfloat16
+    assert mixed_noise.dtype == torch.bfloat16
+    assert beta.dtype == torch.bfloat16
+    assert torch.isfinite(noisy_to).all()
+    assert torch.isfinite(mixed_noise).all()
+    assert torch.isfinite(beta).all()
+
+
+def test_flow_transition_rejects_exact_terminal_source() -> None:
+    clean = torch.zeros(1, 1, 1, 2, 2, dtype=torch.bfloat16)
+    eps_from = torch.ones_like(clean)
+    proposal = torch.zeros_like(clean)
+
+    with pytest.raises(ValueError, match="cannot start from sigma=1"):
+        flow_transition_to_noisier_sigma(
+            noisy_from=torch.ones_like(clean),
+            clean_latents=clean,
+            eps_from=eps_from,
+            sigma_from=torch.tensor([1.0]),
+            sigma_to=torch.tensor([1.0]),
+            proposal_noise=proposal,
+        )
+
+
 def test_flow_transition_raises_for_lower_sigma_target() -> None:
     clean = torch.zeros(1, 1, 1, 2, 2)
     noisy_from = torch.ones_like(clean) * 0.5

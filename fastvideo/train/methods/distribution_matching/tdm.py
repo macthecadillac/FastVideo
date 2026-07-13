@@ -58,9 +58,11 @@ class TDMSampleContext:
 def _expand_sigma_for_latents(
     sigma: torch.Tensor,
     latents: torch.Tensor,
+    *,
+    dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Broadcast scalar, batch, or frame-level sigma tensors to *latents*."""
-    sigma = sigma.to(device=latents.device, dtype=latents.dtype)
+    sigma = sigma.to(device=latents.device, dtype=dtype or latents.dtype)
     if sigma.ndim == 0:
         sigma = sigma.reshape(1)
 
@@ -133,8 +135,8 @@ def flow_transition_to_noisier_sigma(
 
     ``noisy_to == (1 - sigma_to) * clean_latents + sigma_to * mixed_noise``.
     """
-    s1 = _expand_sigma_for_latents(sigma_from, noisy_from)
-    s2 = _expand_sigma_for_latents(sigma_to, noisy_from)
+    s1 = _expand_sigma_for_latents(sigma_from, noisy_from, dtype=torch.float32)
+    s2 = _expand_sigma_for_latents(sigma_to, noisy_from, dtype=torch.float32)
     if bool(torch.any(s2 + eps < s1).item()):
         raise ValueError("TDM flow transition requires sigma_to >= sigma_from")
     if bool(torch.any((1.0 - s1).abs() < eps).item()):
@@ -149,10 +151,15 @@ def flow_transition_to_noisier_sigma(
         raise ValueError("TDM flow transition produced negative beta_sq")
     beta_sq = beta_sq.clamp_min(0.0)
     beta = beta_sq.sqrt()
+    coefficient_dtype = noisy_from.dtype
+    a_latent = a.to(dtype=coefficient_dtype)
+    beta_latent = beta.to(dtype=coefficient_dtype)
+    s1_latent = s1.to(dtype=coefficient_dtype)
+    s2_latent = s2.to(dtype=coefficient_dtype)
 
-    noisy_to = a * noisy_from + beta * proposal_noise
-    mixed_noise = (a * s1 * eps_from + beta * proposal_noise) / s2.clamp_min(eps)
-    return noisy_to, mixed_noise, beta
+    noisy_to = a_latent * noisy_from + beta_latent * proposal_noise
+    mixed_noise = (a_latent * s1_latent * eps_from + beta_latent * proposal_noise) / s2_latent.clamp_min(eps)
+    return noisy_to, mixed_noise, beta_latent
 
 
 class TDMMethod(DMD2Method):

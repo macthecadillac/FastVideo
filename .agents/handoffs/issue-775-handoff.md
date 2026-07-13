@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-13 Kubernetes staging transfer stall on issue/775-tdm
+Last updated: 2026-07-13 four-GB200 TDM recovery on issue/775-tdm
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this
@@ -1264,8 +1264,8 @@ handoff keeps only state needed to continue work.
 
 - Repo: `github.com/hao-ai-lab/FastVideo`
 - Branch: `issue/775-tdm`
-- Worktree: `/tmp/fastvideo-worktrees/issue-775-tdm`
-- Modal launcher worktree: `/tmp/fastvideo-worktrees/interleavethinker-modal`
+- Worktree: `/tmp/fastvideo-worktrees/issue775tdm`
+- Modal launcher worktree: `/tmp/fastvideo-worktrees/interleavethinker-launcher`
   on branch `interleavethinker`
 - Handoff: `.agents/handoffs/issue-775-handoff.md`
 - Latest pushed issue-branch commit before this handoff update:
@@ -3382,4 +3382,58 @@ For model/pipeline changes, also check:
 - A rendered recovery manifest contains both the cache override and `/tmp`
   mount, and the live API server accepted a uniquely named copy in server-side
   dry-run. The temporary read-only PVC log inspector was deleted.
-- The failed GPU pod remains for replacement only after the correction is
+- The failed GPU pod remained available for inspection until the correction was
+  GPG-signed, pushed, and independently reviewed. No training step ran before
+  replacement and no partial training checkpoint was created.
+
+### Reviewed Recovery And Live Training
+
+- The correction was signed and pushed as `1ff8c937c82fda350f3769a3e728592941d48b36`.
+  A fresh exact-range `review-code` agent reported no actionable findings and
+  no adjudicator or additional code change was needed.
+- The terminal pod was deleted and recreated under the same run name directly
+  from the corrected, API-validated manifest. Its completed staging gate was
+  removed and Kubernetes assigned it back to GB200 node `10.0.130.11`.
+- Four-rank NCCL passed again, and the corrected two-step global-batch-4 TDM
+  smoke test completed at `2026-07-13T16:37:37Z`. The durable
+  `preflight/.preflight_done` marker exists and the Triton error did not recur.
+- The main container automatically started the 500-step training run. The
+  first four completed steps averaged 13.79 seconds; warm-step median was
+  12.34 seconds and the latest was 12.28 seconds. Raw compute from that sample
+  projects about 1h42m from step 4; budget 1h45m-2h15m including five scheduled
+  checkpoints at steps 100, 200, 300, 400, and 500 plus normal variance.
+- The supervisor Job remains `Complete 1/1`; the staging and diagnostic pods are
+  gone. The sole live issue-775 workload is the healthy four-GB200 training pod.
+  No PR was opened.
+
+### Step-11 BF16 Transition Failure
+
+- The final status snapshot caught the replacement pod after it became
+  terminal at `2026-07-13T16:41:40Z`. The run completed ten steps at a stable
+  approximately 12.3 seconds per step, then rank 2 raised
+  `ValueError: TDM flow transition cannot start from sigma=1`. The durable
+  `.train_done` marker records `rc=1`; no step-100 checkpoint exists.
+- Root cause is mixed-precision boundary handling, not a sampled exact-terminal
+  source. `flow_transition_to_noisier_sigma(...)` expanded float32 scheduler
+  sigmas in the BF16 latent dtype before validation. A valid near-terminal
+  sigma can round to exactly `1.0` in BF16 and trigger the terminal guard.
+- The implementation now expands and validates transition sigmas in float32,
+  computes `a` and `beta` in float32, then casts completed coefficients back to
+  the latent dtype for the tensor operations. Exact `sigma_from=1.0` remains
+  rejected.
+- Added scheduler-math regressions for a valid near-terminal float32 transition
+  over BF16 latents and for rejection of a genuinely terminal source.
+- Changed-file pre-commit passes yapf, ruff, codespell, mypy, filename, and
+  suggestion hooks after moving the issue worktree to the valid package-path
+  basename `/tmp/fastvideo-worktrees/issue775tdm`. No local tests were run.
+- Modal L40S app `ap-fUEZLRbNPIwWxFFT2jiSn1` checked out exact base
+  `1ff8c937c82fda350f3769a3e728592941d48b36`, applied only the two-file local
+  patch, and ran `pytest tests/local_tests/tdm/
+  fastvideo/tests/train/methods/test_tdm_config_path.py -q`: `37 passed, 14
+  warnings in 2.27s`.
+- Final pre-commit GitHub refresh used `gh` as `macthecadillac`: issue #775 is
+  open and assigned with the same two comments, and no matching open PR exists.
+  No GitHub state was changed.
+- The failed GPU pod remains terminal and holds no GPUs; the supervisor Job is
+  complete and staging remains durable on the PVC. Commit, push, and complete
+  the required fresh review cycle before recreating the run. No PR was opened.
