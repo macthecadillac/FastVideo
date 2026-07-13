@@ -113,6 +113,7 @@
 - User-selected approach: none; Stage 2 must not start until the Stage 1 report receives user guidance.
 - Files changed: this handoff only.
 - Validation: no project tests or Modal jobs run in Stage 1. A standalone arithmetic check confirmed shift-1 high/low proportions 0.125/0.875 and showed the proposed shift-12 proportions 0.631/0.369.
+- Handoff commit/push: signed commit `cc50e13db` was pushed successfully to `macthecadillac/FastVideo` branch `issue/1370-wan-moe-flow-shift-routing` over HTTPS using the verified `gh` credential helper. The configured SSH origin remains unusable because of the unsupported `UseKeychain` option.
 - Next step: present the Stage 1 report and wait for the user's approach/scope decision.
 
 ## Future Gates
