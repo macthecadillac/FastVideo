@@ -65,7 +65,7 @@ spec:
           cd "${POD_OUTPUT_ROOT}"
           echo "Pod $(hostname) started at $(date -u +%FT%TZ)"
           echo "Output root: ${POD_OUTPUT_ROOT}"
-          echo "$$" > output/train.pid
+          echo "${BASHPID}" > output/train.pid
 
           if [[ ! -f preflight/.preflight_done ]]; then
               echo "[pod] running four-GPU preflight"

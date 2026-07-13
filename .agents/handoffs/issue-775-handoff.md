@@ -3437,3 +3437,37 @@ For model/pipeline changes, also check:
 - The failed GPU pod remains terminal and holds no GPUs; the supervisor Job is
   complete and staging remains durable on the PVC. Commit, push, and complete
   the required fresh review cycle before recreating the run. No PR was opened.
+
+### Reviewed BF16 Recovery And Live Step-31 Run
+
+- The precision fix was GPG-signed and pushed as
+  `1984ff0dd7b49f562c75e2083d0344d712a20d25`. A fresh exact-range
+  `review-code` agent reported no actionable findings and confirmed that the
+  remaining material validation was crossing step 11 on four BF16 GB200 ranks.
+- Preserved the failed ten-step attempt at
+  `attempts/failed-step10-20260713T164140Z/{output,logs,preflight}` on the PVC,
+  then reset the live output paths. The initial archive pod recreated `output`
+  and `logs` as root, causing one immediate `output/train.pid: Permission
+  denied` pod exit before preflight. A CPU-only repair restored UID/GID
+  `1000:1000`; both temporary recovery pods were deleted.
+- CPU staging refreshed the persistent repo from `c9f14c8` to exact commit
+  `1984ff0dd`, verified all cached model and `13878/13878` dataset files, and
+  completed at `2026-07-13T17:09:01Z`. The supervisor verified that exact
+  marker, released the scheduling gate, deleted staging, and reached
+  `Complete 1/1` without workstation involvement.
+- The ownership-corrected GPU pod started on GB200 node `10.0.130.11` at
+  `2026-07-13T17:12:42Z`. Four-rank NCCL and the two-step global-batch-4
+  preflight passed; `.preflight_done` was written at `17:15:13Z`.
+- The 500-step run crossed the previous failure boundary and reached step 31
+  with zero pod restarts. Warm steps average 12.34 seconds with a 12.29-second
+  median. Raw remaining compute is about 1h37m; budget roughly 1h45m-2h10m for
+  the scheduled step-100/200/300/400/500 checkpoints and normal variance.
+- Live inspection found Kubernetes reduced `echo "$$"` in the container args
+  to `echo "$"`, so `output/train.pid` was not numeric. PID 1 was verified as
+  the long-lived launcher and the live file was repaired to `1`; the exact
+  recovery `kill -0` check now passes. `pod.yaml` now records
+  `${BASHPID}`, which survives repository env substitution and Kubernetes API
+  server dry-run while remaining a Bash runtime expansion.
+- Current cluster state: the four-GB200 pod is `Running 1/1` on
+  `10.0.130.11`; the supervisor Job is complete; staging and all temporary
+  recovery/diagnostic pods are absent. No PR was opened.
