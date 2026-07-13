@@ -3264,3 +3264,38 @@ For model/pipeline changes, also check:
   with the existing run name and `RESTART_STAGING=1`, followed by verification
   of the new staging process, in-cluster supervisor, gated GPU pod, cache
   growth, and effective service-account RBAC. No PR is to be opened.
+
+## 2026-07-13 Live Staging Recovery
+
+- Launched the approved recovery under the existing run name
+  `tdm-bsz4-500-k8s-20260712144347` with `RESTART_STAGING=1`, pinned to signed
+  remote commit `c9f14c895cadf511fefe7a56da1ef4a205b38c23`. The confirmed-stalled
+  staging pod was deleted; the Lustre PVC and completed Hugging Face cache were
+  retained. No PR was opened.
+- The replacement staging pod started at `2026-07-13T07:29:21Z` on Ready A2
+  node `10.0.143.72`, verified ARM64/PyTorch/CUDA, refreshed the existing repo,
+  and checked out the exact commit. The cached model completed immediately.
+- Dataset recovery is active rather than stalled:
+  - cached-file discovery passed the old `1109/13878` boundary within seconds;
+  - progress reached `10348/13878` after about eight minutes;
+  - downloader PID 162 remained alive, and between `07:32:13Z` and `07:33:11Z`
+    its `write_bytes` increased from `6,139,150,336` to `8,777,957,376`, about
+    45 MB/s over the 58-second sample;
+  - current progress implies roughly two hours, but budget 2-4 hours because
+    remaining file sizes and transfer rates vary. The 20-minute no-write
+    watchdog will restart an attempt against the persistent cache if needed.
+- Cluster-resident transition state is healthy:
+  - the four-GB200 pod already exists but is `Pending`, has no assigned node,
+    retains gate `issue-775/staging`, and reports reason `SchedulingGated`;
+  - supervisor Job `tdm-bsz4-500-k8s-20260712144347-supervisor` is active;
+  - its pod is Running/Ready on A2 node `10.0.143.105` using pinned image digest
+    `sha256:38ab2b14899eceb1d3c5e53fc4369c5523369244b3fd51284feff4181f6e948c`;
+  - supervisor logs show it waiting on the durable `.stage_done` path. It will
+    remove the GPU gate after the exact-commit marker appears, then the GPU pod
+    will run preflight and training itself without workstation involvement.
+- Live impersonated RBAC checks matched the intended boundary: pod creation is
+  denied; patching the exact GPU pod and deleting the exact staging pod are
+  allowed; patching or deleting unrelated `vllm` pods is denied.
+- Recovery objectives are met. Continue monitoring the stage and supervisor;
+  no local process, local `/tmp` state, or workstation network connection is
+  needed for the automatic transition.
