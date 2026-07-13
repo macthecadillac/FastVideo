@@ -3353,3 +3353,33 @@ For model/pipeline changes, also check:
 - No further launcher action is required. The standard scheduler will place the
   already-ungated pod automatically when a fitting GB200 node becomes free;
   the pod will then run preflight and training itself. No PR was opened.
+
+### Scheduled Startup
+
+- Capacity became available and the scheduler assigned the four-GB200 pod to
+  node `10.0.130.11` at `2026-07-13T16:09:32Z` without operator intervention.
+- The pod is currently `Init:0/1`. Its init container is pulling
+  `ghcr.io/hao-ai-lab/fastvideo/fastvideo-dev:py3.12-cuda13.0.0-latest`; a
+  two-minute initialization watch timed out after the pull had been active for
+  about six minutes. Kubernetes reports no image-pull error, backoff, restart,
+  or container failure.
+- The corrected supervisor Job remains `Complete 1/1`; its pod is retained as
+  `Completed`. The staging pod has been deleted. Once the image pull and runtime
+  copy finish, the main container will automatically run four-GPU preflight and
+  then the 500-step training command.
+
+### Four-GPU Preflight Cache Failure
+
+- The 15.96 GB image pull completed in 6m15s and the runtime init container
+  exited successfully. The main container started at `2026-07-13T16:15:51Z`.
+- Four-rank NCCL preflight passed (`NCCL_PREFLIGHT_OK world_size=4 reduced=6.0`).
+  The following two-step TDM smoke test failed on every rank while importing
+  `fastvideo_kernel`: Triton attempted to create its default cache at
+  `/.triton` and raised `PermissionError: [Errno 13] Permission denied`.
+- Root cause is the non-root pod user having no writable home. The pod already
+  mounts a 200 GiB writable `emptyDir` at `/tmp`, so `pod.yaml` now sets the
+  narrow `TRITON_CACHE_DIR=/tmp/triton-cache` environment override.
+- A rendered recovery manifest contains both the cache override and `/tmp`
+  mount, and the live API server accepted a uniquely named copy in server-side
+  dry-run. The temporary read-only PVC log inspector was deleted.
+- The failed GPU pod remains for replacement only after the correction is

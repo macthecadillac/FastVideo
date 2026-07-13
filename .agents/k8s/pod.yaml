@@ -149,6 +149,8 @@ spec:
           value: ""
         - name: TORCH_NCCL_ASYNC_ERROR_HANDLING
           value: "1"
+        - name: TRITON_CACHE_DIR
+          value: "/tmp/triton-cache"
       volumeMounts:
         - name: workspace
           mountPath: /workspace/run
