@@ -3244,3 +3244,23 @@ For model/pipeline changes, also check:
   exact head. After review is clean, launch the existing run name with
   `RESTART_STAGING=1`, then verify the new stage pod, supervisor, gated GPU pod,
   persistent cache growth, and exact-resource RBAC. Do not open a PR.
+
+- The scheduling-gate correction was GPG-signed and pushed as
+  `f1ceaefb9fcca1f0e559067d68f0acef6db16b3e`
+  (`[fix]: gate K8s GPU transition`); the remote branch was verified at that
+  exact commit.
+- The first follow-up reviewer exceeded its bounded window and did not return
+  after an interrupt, so it was closed without findings or changes. A fresh,
+  faster reviewer inspected only `99c85b562..f1ceaefb9`, rechecked GitHub as
+  `macthecadillac`, and reported no actionable findings. It specifically
+  confirmed that early resume cannot create or release the GPU pod, supervisor
+  RBAC has no create permission or arbitrary-pod access, and gate/terminal-pod
+  handling is correct. It made no changes.
+- The reviewer noted only that its own pass was static. Parent validation
+  already covered the live API dry-runs, a real gated unscheduled pod, the
+  server-dry-run gate-removal patch, temporary-pod cleanup, and the live
+  nonmutating early-resume path.
+- Review/adjudication is complete. Next action is the approved live recovery
+  with the existing run name and `RESTART_STAGING=1`, followed by verification
+  of the new staging process, in-cluster supervisor, gated GPU pod, cache
+  growth, and effective service-account RBAC. No PR is to be opened.
