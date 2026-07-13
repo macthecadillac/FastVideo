@@ -3329,3 +3329,27 @@ For model/pipeline changes, also check:
   Job remains pending replacement after the required signed commit and fresh
   review cycle. The completed stage pod and gated GPU pod remain intact. No PR
   was opened.
+
+### Corrected Transition And GPU Capacity
+
+- The whitespace-tolerant response fix was GPG-signed and pushed as
+  `82d642f49f2a874c2d97ef68a0fe2b4daf1966fd`
+  (`[fix]: parse K8s supervisor responses`). A fresh exact-range reviewer
+  checked all five response matchers and reported no actionable findings. It
+  rechecked issue/PR state as `macthecadillac` and made no changes.
+- Replaced the reproduced failed Job with the corrected supervisor manifest.
+  Its retained log showed the full successful path: marker verified, GPU gate
+  released, and transition complete. The Job reached `Complete` in three
+  seconds and deleted the completed staging pod.
+- The four-GB200 pod is now ungated but remains scheduler-Pending. Current
+  scheduler evidence is definitive capacity pressure, not another launcher
+  failure: `0/57` nodes fit; 36 report insufficient `nvidia.com/gpu`, 4 report
+  insufficient memory, 15 are unschedulable, and 6 do not match the GB200 node
+  selector. Reasons can overlap across nodes.
+- Current inventory exposes 51 GB200 nodes, of which 36 are Ready and
+  schedulable, advertising 144 GPUs. None currently has both four free GPUs and
+  the requested 768 GiB memory. Seven visible `vllm` pods consume four GPUs
+  each; RBAC still prevents counting hidden-namespace pod allocations.
+- No further launcher action is required. The standard scheduler will place the
+  already-ungated pod automatically when a fitting GB200 node becomes free;
+  the pod will then run preflight and training itself. No PR was opened.
