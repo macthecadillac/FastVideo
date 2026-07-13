@@ -3299,3 +3299,33 @@ For model/pipeline changes, also check:
 - Recovery objectives are met. Continue monitoring the stage and supervisor;
   no local process, local `/tmp` state, or workstation network connection is
   needed for the automatic transition.
+
+## 2026-07-13 Supervisor Gate-Release Failure
+
+- A later status check found staging had completed successfully at
+  `2026-07-13T12:28:31Z`: all `13878/13878` dataset files resolved, a parquet
+  sample was verified, and the exact-commit `.stage_done` marker was written.
+- The supervisor Job reached `BackoffLimitExceeded` at `12:29:44Z`; the GPU pod
+  remained `SchedulingGated` and training had not started. Replaying the exact
+  retained supervisor manifest reproduced the failure.
+- Kubernetes removed the Job-managed failed pods before their logs could be
+  fetched. An unmanaged diagnostic pod derived from the exact Job template,
+  using the same service account, image, script, and read-only PVC, retained the
+  failure output. It verified the marker and fetched the GPU pod, then printed
+  the API response and exited with `gated GPU pod does not match this run`.
+- Root cause: Kubernetes returned pretty-printed JSON such as
+  `"run": "tdm-bsz4-500-k8s-20260712144347"`, while the shell matched only
+  compact JSON such as `"run":"..."`. The same brittle assumption affected
+  phase and scheduling-gate matches. RBAC and the gate-removal API were not the
+  failure.
+- Corrected every Kubernetes response match in `supervisor.yaml` to tolerate
+  optional JSON whitespace. Validation completed so far:
+  - all corrected run-label, gate-name, and phase expressions matched the live
+    pretty-printed GPU pod JSON;
+  - the corrected rendered shell passed `bash -n`;
+  - the API server accepted a uniquely named corrected supervisor Job in
+    server-side dry-run.
+- The unmanaged diagnostic pod was deleted. The reproduced failed supervisor
+  Job remains pending replacement after the required signed commit and fresh
+  review cycle. The completed stage pod and gated GPU pod remain intact. No PR
+  was opened.

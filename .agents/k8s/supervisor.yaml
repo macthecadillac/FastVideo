@@ -101,7 +101,7 @@ spec:
                   status=$(request -o "${RESPONSE}" -w '%{http_code}' \
                       "${PODS_API}/${STAGE_POD_NAME}" || true)
                   if [[ "${status}" == "200" ]] &&
-                     grep -Eq '"phase":"(Failed|Unknown)"' "${RESPONSE}"; then
+                     grep -Eq '"phase"[[:space:]]*:[[:space:]]*"(Failed|Unknown)"' "${RESPONSE}"; then
                       cat "${RESPONSE}" >&2
                       echo "ERROR: staging pod entered a terminal failure phase" >&2
                       exit 1
@@ -117,18 +117,18 @@ spec:
                   echo "ERROR: gated GPU pod lookup returned HTTP ${status}" >&2
                   exit 1
               fi
-              if ! grep -Fq '"run":"${RUN_NAME}"' "${RESPONSE}"; then
+              if ! grep -Eq '"run"[[:space:]]*:[[:space:]]*"${RUN_NAME}"' "${RESPONSE}"; then
                   cat "${RESPONSE}" >&2
                   echo "ERROR: gated GPU pod does not match this run" >&2
                   exit 1
               fi
-              if grep -Eq '"phase":"(Failed|Succeeded|Unknown)"' "${RESPONSE}"; then
+              if grep -Eq '"phase"[[:space:]]*:[[:space:]]*"(Failed|Succeeded|Unknown)"' "${RESPONSE}"; then
                   cat "${RESPONSE}" >&2
                   echo "ERROR: gated GPU pod is already terminal" >&2
                   exit 1
               fi
 
-              if grep -Fq '"name":"issue-775/staging"' "${RESPONSE}"; then
+              if grep -Eq '"name"[[:space:]]*:[[:space:]]*"issue-775/staging"' "${RESPONSE}"; then
                   status=$(request -o "${RESPONSE}" -w '%{http_code}' \
                       -X PATCH \
                       -H 'Content-Type: application/merge-patch+json' \
@@ -140,7 +140,7 @@ spec:
                       exit 1
                   fi
                   echo "[supervisor] released GPU pod ${POD_NAME} to the scheduler"
-              elif grep -Eq '"phase":"(Pending|Running)"' "${RESPONSE}"; then
+              elif grep -Eq '"phase"[[:space:]]*:[[:space:]]*"(Pending|Running)"' "${RESPONSE}"; then
                   echo "[supervisor] GPU pod ${POD_NAME} was already released"
               else
                   cat "${RESPONSE}" >&2
