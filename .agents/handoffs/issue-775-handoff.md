@@ -62,10 +62,30 @@ Last updated: 2026-07-14 independent quality/RBAC/docs adjudication
   - `uvx pre-commit run --files .agents/k8s/_envsubst.py
     .agents/k8s/run_k8s.sh .agents/k8s/supervisor.yaml
     docs/training/train_infra.md`: passed all applicable hooks.
-- Current next actions: GPG-sign and push the focused RBAC/docs/handoff
-  commit, then add deterministic FastWan T2V/TI2V SSIM cases. Run those cases
-  on Modal L40S, download their first-time references, pause for visual review,
-  and upload only after explicit approval. Do not open a PR.
+- FastWan quality regression patch prepared after the focused RBAC/docs
+  commit:
+  - `fastvideo/tests/ssim/test_wan_t2v_similarity.py` adds a fixed-seed
+    `FastVideo/FastWan2.1-T2V-1.3B-Diffusers` case using two GPUs, SP=2,
+    `448x832`, 45 frames, three DMD steps, guidance `3.0`, seed `1024`, and
+    `FLASH_ATTN`.
+  - `fastvideo/tests/ssim/test_wan_i2v_similarity.py` adds a fixed-seed
+    `FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers` case using two GPUs,
+    SP=2, `448x832`, 45 frames, three DMD steps, guidance `5.0`, seed `1024`,
+    `FLASH_ATTN`, and the suite's existing astronaut input image.
+  - Both use the production `VideoGenerator` similarity helpers and therefore
+    exercise the registry-selected FastWan pipeline and shared
+    `DmdDenoisingStage` scheduler path.
+  - `python3 -m py_compile` for both files passed and `git diff --check`
+    passed. Changed-file pre-commit reported the repository's deliberate
+    no-files-to-check exclusions for `fastvideo/tests/`; the filename-space
+    hook passed. No local project tests were run.
+- The focused RBAC/docs/handoff changes were GPG-signed and pushed as
+  `b935a6bc0810a5791b7727d547cc08dbf45ca8ec`
+  (`[fix]: isolate TDM supervisor RBAC`).
+- Current next actions: GPG-sign and push the SSIM test/handoff commit. Run
+  the two SSIM cases on Modal L40S, download their first-time references,
+  pause for visual review, and upload only after explicit approval. Do not
+  open a PR.
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this

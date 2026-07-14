@@ -69,6 +69,25 @@ FULL_QUALITY_WAN_I2V_MODEL_TO_PARAMS = {
     "Wan2.1-I2V-14B-480P-Diffusers": WAN_I2V_FULL_QUALITY_PARAMS,
 }
 
+FASTWAN_TI2V_PARAMS = {
+    "num_gpus": 2,
+    "model_path": "FastVideo/FastWan2.2-TI2V-5B-FullAttn-Diffusers",
+    "height": 448,
+    "width": 832,
+    "num_frames": 45,
+    "num_inference_steps": 3,
+    "guidance_scale": 5.0,
+    "seed": 1024,
+    "sp_size": 2,
+    "tp_size": 1,
+    "vae_sp": True,
+    "fps": 24,
+}
+FASTWAN_TI2V_MODEL_TO_PARAMS = {
+    "FastWan2.2-TI2V-5B-FullAttn-Diffusers": FASTWAN_TI2V_PARAMS,
+}
+FULL_QUALITY_FASTWAN_TI2V_MODEL_TO_PARAMS = FASTWAN_TI2V_MODEL_TO_PARAMS
+
 WAN_I2V_TEST_CASES = [
     (
         "An astronaut hatching from an egg, on the surface of the moon, the darkness and depth of space realised in the background. High quality, ultrarealistic detail and breath-taking movie-like camera shot.",
@@ -97,4 +116,27 @@ def test_wan_i2v_inference_similarity(
         default_params_map=WAN_I2V_MODEL_TO_PARAMS,
         full_quality_params_map=FULL_QUALITY_WAN_I2V_MODEL_TO_PARAMS,
         min_acceptable_ssim=0.97,
+    )
+
+
+@pytest.mark.parametrize(("prompt", "image_path"), WAN_I2V_TEST_CASES)
+@pytest.mark.parametrize("attention_backend_name", ["FLASH_ATTN"])
+@pytest.mark.parametrize("model_id", list(FASTWAN_TI2V_MODEL_TO_PARAMS.keys()))
+def test_fastwan_ti2v_inference_similarity(
+    prompt: str,
+    image_path: str,
+    attention_backend_name: str,
+    model_id: str,
+) -> None:
+    run_image_to_video_similarity_test(
+        logger=logger,
+        script_dir=os.path.dirname(os.path.abspath(__file__)),
+        device_reference_folder=device_reference_folder,
+        prompt=prompt,
+        image_path=image_path,
+        attention_backend_name=attention_backend_name,
+        model_id=model_id,
+        default_params_map=FASTWAN_TI2V_MODEL_TO_PARAMS,
+        full_quality_params_map=FULL_QUALITY_FASTWAN_TI2V_MODEL_TO_PARAMS,
+        min_acceptable_ssim=0.95,
     )
