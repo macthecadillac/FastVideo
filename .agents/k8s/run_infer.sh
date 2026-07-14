@@ -35,7 +35,7 @@ for step in 100 300 500; do
     RUNTIME_OUT="${STUDENT_OUT}/runtime"
     mkdir -p "${STUDENT_OUT}" "${RUNTIME_OUT}"
     echo "[run_infer] student checkpoint-${step}, four steps"
-    torchrun --standalone --nproc_per_node=1 \
+    torchrun --standalone --nproc_per_node=4 \
         -m fastvideo.train.entrypoint.train \
         --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
         --training.data.data_path data/Wan-Syn_77x448x832_600k \
