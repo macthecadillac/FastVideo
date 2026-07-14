@@ -86,6 +86,7 @@ def main() -> None:
     generator = VideoGenerator.from_pretrained(
         "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         num_gpus=1,
+        flow_shift=8.0,
     )
     for index, prompt in enumerate(prompts):
         common = {
@@ -94,7 +95,6 @@ def main() -> None:
             "width": 832,
             "num_frames": 77,
             "guidance_scale": 6.0,
-            "flow_shift": 8.0,
             "fps": 16,
             "seed": 1000,
         }
