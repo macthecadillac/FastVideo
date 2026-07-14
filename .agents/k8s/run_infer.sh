@@ -66,12 +66,14 @@ import json
 import sys
 from pathlib import Path
 
+from datasets import load_dataset
 from fastvideo import VideoGenerator
 
 validation_json = Path(sys.argv[1])
 base_output = Path(sys.argv[2])
 teacher_output = Path(sys.argv[3])
-prompts = [item["caption"] for item in json.loads(validation_json.read_text())["data"]]
+data = load_dataset("json", data_files=str(validation_json), split="train", field="data")
+prompts = [item["caption"] for item in data]
 base_output.mkdir(parents=True, exist_ok=True)
 teacher_output.mkdir(parents=True, exist_ok=True)
 (teacher_output / "prompts.json").write_text(
