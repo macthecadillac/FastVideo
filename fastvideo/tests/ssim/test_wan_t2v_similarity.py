@@ -9,6 +9,7 @@ from fastvideo.tests.ssim.inference_similarity_utils import (
     resolve_inference_device_reference_folder,
     run_text_to_video_similarity_test,
 )
+from fastvideo.tests.ssim.reference_utils import use_full_quality_configs
 
 logger = init_logger(__name__)
 
@@ -86,7 +87,6 @@ FASTWAN_T2V_PARAMS = {
 FASTWAN_T2V_MODEL_TO_PARAMS = {
     "FastWan2.1-T2V-1.3B-Diffusers": FASTWAN_T2V_PARAMS,
 }
-FULL_QUALITY_FASTWAN_T2V_MODEL_TO_PARAMS = FASTWAN_T2V_MODEL_TO_PARAMS
 
 WAN_T2V_TEST_PROMPTS = [
     "Will Smith casually eats noodles, his relaxed demeanor contrasting with the energetic background of a bustling street food market. The scene captures a mix of humor and authenticity. Mid-shot framing, vibrant lighting.",
@@ -122,6 +122,8 @@ def test_fastwan_t2v_inference_similarity(
     attention_backend_name: str,
     model_id: str,
 ) -> None:
+    if use_full_quality_configs():
+        pytest.skip("FastWan T2V has default-tier reference coverage only")
     run_text_to_video_similarity_test(
         logger=logger,
         script_dir=os.path.dirname(os.path.abspath(__file__)),
@@ -130,6 +132,6 @@ def test_fastwan_t2v_inference_similarity(
         attention_backend_name=attention_backend_name,
         model_id=model_id,
         default_params_map=FASTWAN_T2V_MODEL_TO_PARAMS,
-        full_quality_params_map=FULL_QUALITY_FASTWAN_T2V_MODEL_TO_PARAMS,
+        full_quality_params_map=FASTWAN_T2V_MODEL_TO_PARAMS,
         min_acceptable_ssim=0.95,
     )

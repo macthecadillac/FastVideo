@@ -63,7 +63,11 @@ Last updated: 2026-07-14 independent quality/RBAC/docs adjudication
   `git diff --check` passed.
 - Changed-file `uvx pre-commit run --files ...` passed its filename check;
   all content hooks reported the repository's deliberate path exclusions.
-- RBAC commit/push and default-tier Modal SSIM generation remain pending.
+- The RBAC fix was GPG-signed as
+  `7b30a5fcbca3d404037130893e0289dddbd21ef0`
+  (`[fix]: clean up TDM supervisor RBAC`) and pushed to
+  `macthecadillac/FastVideo:issue/775-tdm`.
+- Default-tier Modal SSIM generation remains pending.
 - No PR was opened.
 ## 2026-07-14 Independent Quality, RBAC, And Documentation Adjudication
 
