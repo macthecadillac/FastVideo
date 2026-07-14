@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-14 independent quality/RBAC/docs adjudication
+Last updated: 2026-07-14 fresh SSIM/RBAC lifecycle adjudication
 
 ## 2026-07-14 Fresh SSIM And RBAC Lifecycle Adjudication
 
@@ -67,7 +67,34 @@ Last updated: 2026-07-14 independent quality/RBAC/docs adjudication
   `7b30a5fcbca3d404037130893e0289dddbd21ef0`
   (`[fix]: clean up TDM supervisor RBAC`) and pushed to
   `macthecadillac/FastVideo:issue/775-tdm`.
-- Default-tier Modal SSIM generation remains pending.
+- The default-only SSIM lane fix was GPG-signed as
+  `c3b8103eda330029fa5f69335122d82eb1867311`
+  (`[test]: limit FastWan SSIM to seeded tier`) and pushed to the same branch.
+- Default-tier Modal SSIM generation attempts:
+  - App `ap-yZYTjNlrv5RdGuZMZ0L2hw` selected both exact FastWan cases at
+    `c3b8103`, but both exited before collection because Transformers wrapped
+    an import failure as `ModuleNotFoundError: Could not import module
+    'PreTrainedModel'`; no videos were produced.
+  - Diagnostic apps `ap-szY8wF8QsSFpPfF77KFpgg` and
+    `ap-9SwX7nwMM4r7oZOBu0Iotg` isolated the cause. The runner's
+    `uv pip install -e ".[test]"` replaced the image's CUDA 12.6 Torch with a
+    CUDA 12.8 build while leaving TorchAudio on CUDA 12.6. A temporary copy of
+    the Modal runner now uses the full development image's installed
+    dependencies and installs only the checked-out package with `--no-deps`.
+  - App `ap-yQzrMV9jeZq7LCRhYDka52` then completed setup and launched TI2V on
+    GPUs 0-1 and T2V on GPUs 2-3. Both loaded their released checkpoints and
+    reached the first denoising step, then failed in
+    `flash_attn_cute._flash_attn_cute_forward` because current FA4 returns
+    additional diagnostics and this older branch unpacked exactly two values.
+    Exit code was `-3` for both tasks and zero videos were exported.
+- The issue branch predates upstream compatibility commit
+  `b36d0ef08578de8c658f0979c71c4282cfa299f3`, while CI's moving
+  `py3.12-latest` image contains the newer FA4 API. Backported only that
+  commit's return extraction adjustments: regular and variable-length paths
+  select `[:2]`, and FP4 selects `[0]`. This preserves existing backend
+  behavior and is required for exact-branch generation in the current CI
+  image. A fresh exact-commit L40S run remains pending after this change is
+  signed and pushed.
 - No PR was opened.
 ## 2026-07-14 Independent Quality, RBAC, And Documentation Adjudication
 
