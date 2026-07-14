@@ -81,31 +81,37 @@ teacher_output.mkdir(parents=True, exist_ok=True)
     encoding="utf-8",
 )
 
-generator = VideoGenerator.from_pretrained(
-    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-    num_gpus=1,
-)
-for index, prompt in enumerate(prompts):
-    common = {
-        "prompt": prompt,
-        "height": 448,
-        "width": 832,
-        "num_frames": 77,
-        "guidance_scale": 6.0,
-        "flow_shift": 8.0,
-        "fps": 16,
-        "seed": 1000,
-    }
-    generator.generate_video(
-        **common,
-        num_inference_steps=4,
-        output_path=str(base_output / f"base_wan_4step_prompt{index}.mp4"),
+
+def main() -> None:
+    generator = VideoGenerator.from_pretrained(
+        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        num_gpus=1,
     )
-    generator.generate_video(
-        **common,
-        num_inference_steps=50,
-        output_path=str(teacher_output / f"teacher_wan_50step_prompt{index}.mp4"),
-    )
+    for index, prompt in enumerate(prompts):
+        common = {
+            "prompt": prompt,
+            "height": 448,
+            "width": 832,
+            "num_frames": 77,
+            "guidance_scale": 6.0,
+            "flow_shift": 8.0,
+            "fps": 16,
+            "seed": 1000,
+        }
+        generator.generate_video(
+            **common,
+            num_inference_steps=4,
+            output_path=str(base_output / f"base_wan_4step_prompt{index}.mp4"),
+        )
+        generator.generate_video(
+            **common,
+            num_inference_steps=50,
+            output_path=str(teacher_output / f"teacher_wan_50step_prompt{index}.mp4"),
+        )
+
+
+if __name__ == "__main__":
+    main()
 PYREF
 python3 /tmp/issue775_reference_infer.py \
     "${VALIDATION_DIR}/validation_4.json" \
