@@ -12,6 +12,7 @@ from torch.testing import assert_close
 
 from fastvideo.models.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from fastvideo.pipelines.pipeline_batch_info import TrainingBatch
+from fastvideo.train.methods.distribution_matching import tdm as tdm_module
 from fastvideo.train.methods.distribution_matching.tdm import (
     TDMMethod,
     flow_effective_noise,
@@ -483,6 +484,37 @@ def test_tdm_fake_score_uses_clipped_flow_snr_directly(
         components["weights"],
         torch.full((2, ), expected_weight, dtype=torch.float32),
     )
+
+
+def test_tdm_next_step_noise_interval_uses_rank_stratified_adjacent_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    method, _, _ = _build_method(method_overrides={
+        "noise_interval_mode": "next_step",
+        "use_randmid": False,
+    })
+    monkeypatch.setattr(tdm_module.dist, "is_available", lambda: True)
+    monkeypatch.setattr(tdm_module.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(tdm_module.dist, "get_rank", lambda: 3)
+    batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    trajectory = method._student_trajectory(batch)
+
+    context = method._sample_tdm_context(trajectory)
+
+    assert context.trajectory_indices.tolist() == [2, 3]
+    assert_close(context.sigma_source, torch.tensor([0.5, 0.25]))
+    assert_close(context.sigma_intermediate, torch.tensor([0.25, 0.0]))
+    assert_close(context.sigma_target, torch.tensor([0.25, 0.001]))
+    assert bool(torch.all(context.sigma_target >= context.sigma_intermediate).item())
+    assert bool((method._tdm_fake_score_weights(context) > 0).all().item())
+
+
+def test_tdm_next_step_noise_interval_requires_fixed_intermediate() -> None:
+    with pytest.raises(ValueError, match="use_randmid"):
+        _build_method(method_overrides={
+            "noise_interval_mode": "next_step",
+            "use_randmid": True,
+        })
 
 
 def test_tdm_to_terminal_noise_interval_stays_below_terminal_sigma() -> None:

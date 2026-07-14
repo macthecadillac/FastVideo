@@ -7,7 +7,7 @@ POD_OUTPUT_ROOT="${1:?Usage: run_infer.sh <POD_OUTPUT_ROOT>}"
 REPO_DIR="${POD_OUTPUT_ROOT}/repo"
 LOG_DIR="${POD_OUTPUT_ROOT}/logs"
 OUT_DIR="${POD_OUTPUT_ROOT}/output"
-VALIDATION_DIR="${POD_OUTPUT_ROOT}/validation_step500"
+VALIDATION_DIR="${POD_OUTPUT_ROOT}/validation_step200"
 SHARED_HF_HOME="${SHARED_HF_HOME:-/workspace/run/issue-775/shared-cache/hf}"
 INFER_DONE="${VALIDATION_DIR}/.infer_done"
 STUDENT_ROOT="${VALIDATION_DIR}/student_tdm_4step"
@@ -33,7 +33,7 @@ cp -f examples/training/finetune/Wan2.1-VSA/Wan-Syn-Data/validation_4.json \
     "${VALIDATION_DIR}/validation_4.json"
 
 echo "[run_infer] start $(date -u +%FT%TZ)"
-for step in 100 300 500; do
+for step in 50 100 200; do
     CHECKPOINT_DIR="${OUT_DIR}/checkpoint-${step}"
     STUDENT_OUT="${STUDENT_ROOT}/checkpoint-${step}"
     RUNTIME_OUT="${STUDENT_OUT}/runtime"

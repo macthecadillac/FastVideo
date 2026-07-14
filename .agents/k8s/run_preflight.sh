@@ -50,7 +50,7 @@ dist.destroy_process_group()
 PYDIST
 torchrun --standalone --nproc_per_node=4 /tmp/issue775_nccl_preflight.py
 
-echo "[preflight] starting two-step global-batch-4 TDM smoke"
+echo "[preflight] starting two-step global-batch-4 next-step TDM smoke"
 torchrun --standalone --nproc_per_node=4 \
     -m fastvideo.train.entrypoint.train \
     --config examples/train/configs/distribution_matching/wan/tdm_t2v_lora.yaml \
@@ -59,12 +59,15 @@ torchrun --standalone --nproc_per_node=4 \
     --training.loop.gradient_accumulation_steps 1 \
     --training.loop.max_train_steps 2 \
     --method.generator_update_interval 1 \
+    --method.noise_interval_mode next_step \
+    --method.use_randmid false \
+    --method.real_score_guidance_scale 6.0 \
     --training.checkpoint.output_dir "${PREFLIGHT_DIR}" \
     --training.checkpoint.training_state_checkpointing_steps 0 \
     --training.checkpoint.checkpoints_total_limit 0 \
     --training.tracker.trackers "[jsonl]" \
     --training.tracker.project_name distillation_wan \
-    --training.tracker.run_name "${RUN_NAME:-tdm_bsz4_500_k8s}_preflight" \
+    --training.tracker.run_name "${RUN_NAME:-tdm_nextstep_bsz4_200_k8s}_preflight" \
     --callbacks.validation.every_steps 0 \
     --pipeline.flow_shift 8 \
     --pipeline.dmd_sample_type ode \

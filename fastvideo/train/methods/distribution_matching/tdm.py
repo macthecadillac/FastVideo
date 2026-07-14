@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, TYPE_CHECKING
 
 import torch
+import torch.distributed as dist
 
 from fastvideo.train.methods.base import LogScalar
 from fastvideo.train.methods.distribution_matching.dmd2 import DMD2Method
@@ -195,10 +196,10 @@ class TDMMethod(DMD2Method):
             default="sde",
             where="method.student_sample_type",
         )  # type: ignore[assignment]
-        self._noise_interval_mode: Literal["separate", "to_terminal"] = require_choice(
+        self._noise_interval_mode: Literal["separate", "to_terminal", "next_step"] = require_choice(
             mcfg,
             "noise_interval_mode",
-            {"separate", "to_terminal"},
+            {"separate", "to_terminal", "next_step"},
             default="separate",
             where="method.noise_interval_mode",
         )  # type: ignore[assignment]
@@ -208,6 +209,9 @@ class TDMMethod(DMD2Method):
             default=True,
             where="method.use_randmid",
         )
+        if self._noise_interval_mode == "next_step" and self._use_randmid:
+            raise ValueError("method.use_randmid must be false when method.noise_interval_mode='next_step'")
+
         self._use_huber = require_bool(
             mcfg,
             "use_huber",
@@ -517,6 +521,23 @@ class TDMMethod(DMD2Method):
             sigmas=sigma_tensor,
         )
 
+    def _transition_aligned_trajectory_indices(
+        self,
+        *,
+        batch_size: int,
+        num_trajectory_points: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        rank = 0
+        if dist.is_available() and dist.is_initialized():
+            rank = int(dist.get_rank())
+
+        distributed_cfg = getattr(self.training_config, "distributed", None)
+        sp_size = max(1, int(getattr(distributed_cfg, "sp_size", 1) or 1))
+        sample_group_rank = rank // sp_size
+        start = sample_group_rank * batch_size
+        return (torch.arange(batch_size, device=device, dtype=torch.long) + start) % num_trajectory_points
+
     def _sample_tdm_context(
         self,
         trajectory: TDMTrajectory,
@@ -525,14 +546,21 @@ class TDMMethod(DMD2Method):
         interval_eps = 1e-6
         batch_size = trajectory.noisy_latents[0].shape[0]
         batch_indices = torch.arange(batch_size, device=device)
-        trajectory_indices = torch.randint(
-            0,
-            len(trajectory.sigmas),
-            [batch_size],
-            device=device,
-            dtype=torch.long,
-            generator=self.cuda_generator,
-        )
+        if self._noise_interval_mode == "next_step":
+            trajectory_indices = self._transition_aligned_trajectory_indices(
+                batch_size=batch_size,
+                num_trajectory_points=len(trajectory.sigmas),
+                device=device,
+            )
+        else:
+            trajectory_indices = torch.randint(
+                0,
+                len(trajectory.sigmas),
+                [batch_size],
+                device=device,
+                dtype=torch.long,
+                generator=self.cuda_generator,
+            )
         clean_latents = torch.stack(trajectory.clean_latents)[trajectory_indices, batch_indices].detach()
         noisy_source = torch.stack(trajectory.noisy_latents)[trajectory_indices, batch_indices].detach()
         sigma_source = trajectory.sigmas[trajectory_indices]
@@ -572,10 +600,25 @@ class TDMMethod(DMD2Method):
         if self._use_randmid:
             sigma_intermediate, _ = sample_scheduler_point(sigma_intermediate, sigma_source)
 
-        target_upper = sigma_source
-        if self._noise_interval_mode == "to_terminal":
-            target_upper = torch.full_like(sigma_source, trajectory.sigmas.max())
-        sigma_target, timestep_target = sample_scheduler_point(sigma_intermediate, target_upper)
+        if self._noise_interval_mode == "next_step":
+            sigma_target = sigma_intermediate
+            terminal_mask = sigma_target <= self._sigma_eps
+            if bool(torch.any(terminal_mask).item()):
+                positive_sigmas = scheduler_sigmas[scheduler_sigmas > self._sigma_eps]
+                if positive_sigmas.numel() == 0:
+                    raise ValueError("TDM next_step mode requires at least one positive scheduler sigma")
+                lowest_positive_sigma = positive_sigmas.min()
+                sigma_target = torch.where(
+                    terminal_mask,
+                    lowest_positive_sigma.expand_as(sigma_target),
+                    sigma_target,
+                )
+            timestep_target = self._model_timestep_for_sigma(sigma_target, self.student)
+        else:
+            target_upper = sigma_source
+            if self._noise_interval_mode == "to_terminal":
+                target_upper = torch.full_like(sigma_source, trajectory.sigmas.max())
+            sigma_target, timestep_target = sample_scheduler_point(sigma_intermediate, target_upper)
 
         eps_source = flow_effective_noise(
             noisy_source,

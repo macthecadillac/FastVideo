@@ -1,14 +1,13 @@
-# Issue 775 TDM - corrected K8s batch-4 run plan
+# Issue 775 TDM - next-step K8s canary plan
 
-Updated: 2026-07-13
+Updated: 2026-07-14
 Status: implemented; each launch still requires explicit approval
 
 ## Goal
 
-Train the issue-775 Wan TDM student for 500 steps at global batch size 4,
-then compare three student checkpoints against the base Wan model at four
-steps and the base Wan teacher at 50 steps. No Kubernetes workload should be
-created until the user separately approves launch.
+Train the issue-775 Wan TDM student for a 200-step transition-aligned canary
+at global batch size 4, then compare three student checkpoints against the
+base Wan model at four steps and the base Wan teacher at 50 steps.
 
 ## Cluster layout
 
@@ -74,7 +73,7 @@ matches the approved commit does the Job remove the GPU pod's scheduling gate.
 The Job, gated pod, and rendered recovery manifest are stored in the cluster,
 so workstation disconnects, restarts, and local `/tmp` cleanup cannot interrupt
 the transition. The GPU pod runs `run_preflight.sh` itself before starting
-training. Any failure prevents the 500-step process from starting. The
+training. Any failure prevents the 200-step process from starting. The
 per-run service account, Role, and RoleBinding are labeled with the run name
 and owned by the supervisor Job. The Job is removed one hour after completion
 or failure, which garbage-collects those RBAC resources; relaunching the same
@@ -88,8 +87,10 @@ run also deletes their exact names before recreating them.
 - GPUs: 4; HSDP shard dimension 4; TP/SP 1
 - Local batch size: 1 per data-parallel group
 - Global batch size: 4; gradient accumulation: 1
-- Steps: 500
+- Steps: 200
 - Generator update interval: 1
+- Noise interval mode: `next_step`; `use_randmid: false`
+- Real-score guidance scale: 6.0
 - TDM timesteps: `[1000, 750, 500, 250]`
 - Student and DMD sampling: ODE
 - Flow shift: 8
@@ -97,7 +98,7 @@ run also deletes their exact names before recreating them.
 - Critic optimizer: LR `8e-6`, betas `[0.0, 0.999]`
 - Gradient clipping: 1.0
 - EMA: decay 0.98 from step 0
-- Checkpoints: every 100 steps; retain up to 6
+- Checkpoints: every 50 steps; retain up to 6
 - Validation during training: disabled
 - W&B: disabled; durable JSONL tracker selected explicitly
 
@@ -113,8 +114,8 @@ detached training process dies while its sleeping pod remains Running, set
 `RECOVER_DEAD_TRAINING=1` to opt
 into one recovery attempt from the newest completed checkpoint; the default is
 to stop for inspection. It refuses inference unless `rc=0`,
-checkpoints 100 through 500 have matching metadata, DCP metadata, and
-completion markers, tracker steps 1 through 500 exist, and tracker values do
+checkpoints 50, 100, and 200 have matching metadata, DCP metadata, and
+completion markers, tracker steps 1 through 200 exist, and tracker values do
 not contain numeric nonfinite values or JSONL nonfinite markers. Loss before
 the first completed checkpoint remains unrecoverable.
 
@@ -123,7 +124,7 @@ the first completed checkpoint remains unrecoverable.
 For the same four prompts, seed 1000, guidance 6.0, flow shift 8, 832x448,
 77 frames, and 16 fps:
 
-- TDM student, four steps: checkpoints 100, 300, and 500
+- TDM student, four steps: checkpoints 50, 100, and 200
 - Base Wan, four steps
 - Base Wan teacher, 50 steps
 
@@ -141,7 +142,7 @@ Launch only after explicit approval:
 KUBECONFIG=/home/sandbox/.kube/config \
 K8S_NAMESPACE=vllm \
 COMMIT=<approved-full-40-character-commit-sha> \
-RUN_NAME=tdm-bsz4-500-k8s-<timestamp> \
+RUN_NAME=tdm-nextstep-bsz4-200-k8s-<timestamp> \
     bash .agents/k8s/run_k8s.sh
 ```
 

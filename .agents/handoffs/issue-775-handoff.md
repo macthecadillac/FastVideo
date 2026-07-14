@@ -1,7 +1,47 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-14 fresh SSIM/RBAC lifecycle adjudication
+Last updated: 2026-07-14 next-step K8s canary implementation
+
+## 2026-07-14 Next-Step K8s Canary Implementation
+
+- User approved the proposed transition-aligned training schedule with "Go
+  ahead." No PR was opened. `gh api user --jq .login` verified
+  `macthecadillac`; issue #775 and its two comments were reread, and no
+  commenter-proposed implementation exists. A focused open-PR search for
+  `775 OR TDM OR issue/775-tdm` returned `[]`.
+- The previously staged FastWan T2V SSIM VSA correction and handoff update were
+  GPG-signed as `3a110e09bd87b3079b0c9acddd55443dd5b7de69`
+  (`[test]: use VSA for FastWan T2V SSIM`) and pushed to
+  `macthecadillac/FastVideo:issue/775-tdm` over HTTPS using the verified `gh`
+  credential helper. Direct SSH push failed because GitHub was not present in
+  `known_hosts`; the safer HTTPS push path was used instead.
+- Implemented `method.noise_interval_mode: next_step` in
+  `fastvideo/train/methods/distribution_matching/tdm.py`. This mode requires
+  `use_randmid: false`, chooses deterministic trajectory indices across
+  distributed ranks using the same SP grouping convention as method RNG
+  seeding, and targets each source at the adjacent trajectory boundary. For
+  the final clean transition it uses the lowest positive scheduler sigma,
+  because the training scheduler does not expose an exact `sigma=0` model
+  timestep. Existing `separate` and `to_terminal` behavior is unchanged.
+- Added focused fake-model coverage in
+  `tests/local_tests/tdm/test_tdm_method_unit.py` for rank-stratified
+  `next_step` sampling and the `use_randmid` guard. Updated
+  `docs/training/train_infra.md` to document the new mode.
+- Updated the K8s canary plan and scripts for a 200-step run:
+  `tdm-nextstep-bsz4-200-k8s-*`, global batch 4, four GB200 GPUs,
+  generator update interval 1, ODE rollout/sampling, flow shift 8,
+  `real_score_guidance_scale=6.0`, checkpoints at 50/100/200, and validation
+  comparisons at checkpoints 50/100/200 against base Wan 4-step and teacher
+  50-step controls. Preflight now exercises the same `next_step` mode.
+- Syntax-only validation completed locally: `bash -n` for the edited K8s
+  scripts, `python3 -m py_compile` for the edited Python files, and
+  `git diff --check` all passed. No local pytest/project tests were run, per
+  FastVideo rules.
+- Next steps: GPG-sign and push the canary implementation commit, inspect the
+  K8s cluster for current capacity, launch with the exact pushed commit SHA,
+  then report submitted resources, observed scheduling/staging status, and an
+  estimated runtime.
 
 ## 2026-07-14 Final Kubernetes Inference Validation
 

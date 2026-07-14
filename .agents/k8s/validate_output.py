@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 
+EXPECTED_CHECKPOINTS = (50, 100, 200)
+
+
 def iter_nonfinite_values(value, path="$"):
     if isinstance(value, dict):
         if value.get("_type") == "nonfinite_float":
@@ -27,7 +30,7 @@ def validate_output(output_dir: Path) -> None:
     if "rc=0" not in done_text.splitlines():
         raise SystemExit(f"training did not complete successfully:\n{done_text}")
 
-    for step in (100, 200, 300, 400, 500):
+    for step in EXPECTED_CHECKPOINTS:
         checkpoint = output_dir / f"checkpoint-{step}"
         metadata_path = checkpoint / "metadata.json"
         marker_path = checkpoint / ".complete"
@@ -61,7 +64,7 @@ def validate_output(output_dir: Path) -> None:
             if markers:
                 nonfinite.append((line_number, markers))
 
-    missing_steps = sorted(set(range(1, 501)) - steps)
+    missing_steps = sorted(set(range(1, EXPECTED_CHECKPOINTS[-1] + 1)) - steps)
     if missing_steps:
         raise SystemExit(f"tracker is missing training steps: {missing_steps[:20]}")
     if nonfinite:
@@ -71,7 +74,7 @@ def validate_output(output_dir: Path) -> None:
         "TRAINING_OUTPUT_OK",
         f"rows={row_count}",
         f"unique_steps={len(steps)}",
-        "checkpoints=100,200,300,400,500",
+        f"checkpoints={','.join(str(step) for step in EXPECTED_CHECKPOINTS)}",
     )
 
 

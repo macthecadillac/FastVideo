@@ -371,7 +371,11 @@ With `use_randmid: true`, it then samples an intermediate sigma in
 `[sigma_intermediate, sigma_source)`. For `noise_interval_mode: to_terminal`,
 the target is sampled in `[sigma_intermediate, sigma_terminal)`, so it may be
 any scheduler point in that interval. The exact terminal `sigma=1.0` endpoint
-is excluded because flow-SNR weighting gives it zero fake-score weight.
+is excluded because flow-SNR weighting gives it zero fake-score weight. For
+`noise_interval_mode: next_step`, set `use_randmid: false`; each source point
+uses the adjacent trajectory boundary as its target, and the final clean
+transition uses the lowest positive scheduler sigma because training schedulers
+do not expose an exact `sigma=0` model timestep.
 
 ### Self-Forcing (Causal DMD)
 

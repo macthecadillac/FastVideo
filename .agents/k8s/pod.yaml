@@ -95,7 +95,7 @@ spec:
                   bash repo/.agents/k8s/run_train.sh "${POD_OUTPUT_ROOT}" \
                   > logs/train.launcher.out 2>&1
           else
-              echo "[pod] starting 500-step training"
+              echo "[pod] starting 200-step next-step TDM training"
               bash repo/.agents/k8s/run_train.sh "${POD_OUTPUT_ROOT}" \
                   > logs/train.launcher.out 2>&1
           fi

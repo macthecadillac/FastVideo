@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the 500-step issue-775 TDM training workload inside the GB200 pod.
+# Run the 200-step transition-aligned issue-775 TDM canary inside the GB200 pod.
 
 set -euo pipefail
 
@@ -31,14 +31,17 @@ TRAIN_ARGS=(
     --training.data.data_path data/Wan-Syn_77x448x832_600k
     --training.data.train_batch_size 1
     --training.loop.gradient_accumulation_steps 1
-    --training.loop.max_train_steps 500
+    --training.loop.max_train_steps 200
     --method.generator_update_interval 1
+    --method.noise_interval_mode next_step
+    --method.use_randmid false
+    --method.real_score_guidance_scale 6.0
     --training.checkpoint.output_dir "${OUT_DIR}"
-    --training.checkpoint.training_state_checkpointing_steps 100
+    --training.checkpoint.training_state_checkpointing_steps 50
     --training.checkpoint.checkpoints_total_limit 6
     --training.tracker.trackers "[jsonl]"
     --training.tracker.project_name distillation_wan
-    --training.tracker.run_name "${RUN_NAME:-tdm_bsz4_500_k8s}"
+    --training.tracker.run_name "${RUN_NAME:-tdm_nextstep_bsz4_200_k8s}"
     --callbacks.validation.every_steps 0
     --pipeline.flow_shift 8
     --pipeline.dmd_sample_type ode

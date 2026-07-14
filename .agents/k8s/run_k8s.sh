@@ -17,7 +17,7 @@ if [[ ! "${COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
     echo "ERROR: COMMIT must be a full lowercase 40-character commit SHA" >&2
     exit 1
 fi
-RUN_NAME="${RUN_NAME:-tdm-bsz4-500-k8s-$(date +%s)}"
+RUN_NAME="${RUN_NAME:-tdm-nextstep-bsz4-200-k8s-$(date +%s)}"
 POD_NAME="${POD_NAME:-${RUN_NAME}}"
 STAGE_POD_NAME="${STAGE_POD_NAME:-${POD_NAME}-stage}"
 SUPERVISOR_JOB_NAME="${SUPERVISOR_JOB_NAME:-${POD_NAME}-supervisor}"
