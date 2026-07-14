@@ -115,8 +115,35 @@ if kubectl --namespace "${K8S_NAMESPACE}" get pod "${STAGE_POD_NAME}" -o name >/
         --wait=true --timeout=5m
 fi
 
-kubectl --namespace "${K8S_NAMESPACE}" delete job "${SUPERVISOR_JOB_NAME}" \
-    --ignore-not-found --wait=true --timeout=5m
+cleanup_supervisor_resources() {
+    kubectl --namespace "${K8S_NAMESPACE}" delete job "${SUPERVISOR_JOB_NAME}" \
+        --ignore-not-found --wait=true --timeout=5m
+    kubectl --namespace "${K8S_NAMESPACE}" delete rolebinding "${SUPERVISOR_RBAC_NAME}" \
+        --ignore-not-found --wait=true --timeout=5m
+    kubectl --namespace "${K8S_NAMESPACE}" delete role "${SUPERVISOR_RBAC_NAME}" \
+        --ignore-not-found --wait=true --timeout=5m
+    kubectl --namespace "${K8S_NAMESPACE}" delete serviceaccount "${SUPERVISOR_RBAC_NAME}" \
+        --ignore-not-found --wait=true --timeout=5m
+}
+
+attach_supervisor_rbac_owners() {
+    local job_uid owner_patch resource
+    job_uid=$(kubectl --namespace "${K8S_NAMESPACE}" get job "${SUPERVISOR_JOB_NAME}" \
+        -o jsonpath='{.metadata.uid}')
+    if [[ -z "${job_uid}" ]]; then
+        echo "ERROR: supervisor Job ${SUPERVISOR_JOB_NAME} has no UID" >&2
+        return 1
+    fi
+    owner_patch=$(printf \
+        '{"metadata":{"ownerReferences":[{"apiVersion":"batch/v1","kind":"Job","name":"%s","uid":"%s","controller":true,"blockOwnerDeletion":false}]}}' \
+        "${SUPERVISOR_JOB_NAME}" "${job_uid}")
+    for resource in serviceaccount role rolebinding; do
+        kubectl --namespace "${K8S_NAMESPACE}" patch "${resource}" "${SUPERVISOR_RBAC_NAME}" \
+            --type=merge --patch "${owner_patch}" >/dev/null
+    done
+}
+
+cleanup_supervisor_resources
 kubectl apply --dry-run=server -f "${STAGE_MANIFEST}" >/dev/null
 kubectl apply --dry-run=server -f "${POD_MANIFEST}" >/dev/null
 kubectl apply --dry-run=server -f "${CONFIGMAP_MANIFEST}" >/dev/null
@@ -125,7 +152,12 @@ echo "Server-side dry-run accepted staging, supervisor, and GPU resources."
 
 kubectl apply -f "${CONFIGMAP_MANIFEST}"
 kubectl apply -f "${POD_MANIFEST}"
+SUPERVISOR_SETUP_COMPLETE=0
+trap 'if [[ "${SUPERVISOR_SETUP_COMPLETE}" != "1" ]]; then cleanup_supervisor_resources; fi' EXIT
 kubectl apply -f "${SUPERVISOR_MANIFEST}"
+attach_supervisor_rbac_owners
+SUPERVISOR_SETUP_COMPLETE=1
+trap - EXIT
 kubectl apply -f "${STAGE_MANIFEST}"
 
 cat <<EOF

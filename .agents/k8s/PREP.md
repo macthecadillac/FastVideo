@@ -74,7 +74,11 @@ matches the approved commit does the Job remove the GPU pod's scheduling gate.
 The Job, gated pod, and rendered recovery manifest are stored in the cluster,
 so workstation disconnects, restarts, and local `/tmp` cleanup cannot interrupt
 the transition. The GPU pod runs `run_preflight.sh` itself before starting
-training. Any failure prevents the 500-step process from starting.
+training. Any failure prevents the 500-step process from starting. The
+per-run service account, Role, and RoleBinding are labeled with the run name
+and owned by the supervisor Job. The Job is removed one hour after completion
+or failure, which garbage-collects those RBAC resources; relaunching the same
+run also deletes their exact names before recreating them.
 
 ## Training parameters
 

@@ -3,6 +3,68 @@
 Compacted: 2026-07-01
 Last updated: 2026-07-14 independent quality/RBAC/docs adjudication
 
+## 2026-07-14 Fresh SSIM And RBAC Lifecycle Adjudication
+
+- Resumed Stage 3 adjudication in `/tmp/fastvideo-worktrees/issue775tdm` on
+  `issue/775-tdm` at the requested signed head
+  `a75127b2e0edcc53486937ebbe50c1b706240547`, reviewing
+  `084ce18533c2277a629daeb275f56a0a04ce0eac..a75127b2e0edcc53486937ebbe50c1b706240547`.
+  `gh api` confirmed the fork branch is pushed at that exact head; the local
+  `origin/issue/775-tdm` tracking ref was merely stale at `b935a6bc0`.
+- Verified `gh` identity `macthecadillac`. Independently reread issue #775 and
+  all two comments. The issue remains open and assigned to `macthecadillac`;
+  neither comment proposes an implementation. Refreshed the complete open PR
+  list and targeted searches for `775`, `TDM`, and head
+  `macthecadillac:issue/775-tdm`; no related open PR exists. No GitHub state
+  was changed.
+- Raw finding decisions and evidence:
+  - **Missing FastWan SSIM references: accepted.** The Modal scheduler extracts
+    both new `*_MODEL_TO_PARAMS` keys and schedules them. Both helpers generate
+    first and then raise `FileNotFoundError` when their model/backend reference
+    folder is absent. Public HF dataset API requests returned HTTP 404 for T2V
+    and TI2V under both `reference_videos/default/L40S_reference_videos` and
+    `reference_videos/full_quality/L40S_reference_videos`. The default tier
+    must be generated on L40S and visually approved before upload. The tests
+    are now explicitly skipped under `--ssim-full-quality`, and the misleading
+    full-quality aliases were removed, so no unsupported second tier is
+    exposed.
+  - **Released FastWan tests do not prove TDM convergence: rejected as an
+    actionable code finding.** The factual distinction is correct, but the
+    committed tests deliberately cover registry-selected released FastWan
+    pipelines and the shared `DmdDenoisingStage`; they do not claim to load a
+    branch-trained TDM student. This handoff already records the separate
+    branch-trained checkpoint-100/300/500 visual failure and explicitly treats
+    issue-level convergence as unproven. There is no visually approved TDM
+    checkpoint from which to create the requested fixed-prompt baseline.
+    Publishing the blurred run as a reference would turn a known failure into
+    an accepted regression target. A future approved branch-trained checkpoint
+    remains a release-readiness requirement, not a correction to these shared
+    inference-stage tests.
+  - **Per-run RBAC leaks: accepted.** `run_k8s.sh` deleted only the supervisor
+    Job, while each launch created a unique service account, Role, and
+    RoleBinding with no labels or owner references. Live read-only namespace
+    inspection also found the older unlabelled `issue-775-launcher` triplet,
+    confirming that this workload has left stale RBAC behind. The patch labels
+    all three resources by app/run/issue, gives the supervisor Job a one-hour
+    post-finish TTL, attaches the Job as their controller owner after creation,
+    and deletes the exact Job/RBAC names before recreating the same run. A
+    bounded setup trap reclaims exact names if owner attachment fails.
+- RBAC validation completed:
+  - `bash -n .agents/k8s/run_k8s.sh` passed.
+  - A synthetic `adjudicate-rbac` manifest rendered all four resources with
+    distinct exact names, the three expected app/run/issue label sets, and
+    `ttlSecondsAfterFinished: 3600`; no placeholders remained.
+  - `kubectl create --dry-run=client` accepted all four resources.
+  - `kubectl apply --dry-run=server` accepted all four resources.
+  - Server-side dry-run accepted the generated controller-owner patch for the
+    service account, Role, and RoleBinding. All Kubernetes checks were
+    nonmutating; no resources were created or changed.
+- `python3 -m py_compile` passed for both changed Wan SSIM files, and
+  `git diff --check` passed.
+- Changed-file `uvx pre-commit run --files ...` passed its filename check;
+  all content hooks reported the repository's deliberate path exclusions.
+- RBAC commit/push and default-tier Modal SSIM generation remain pending.
+- No PR was opened.
 ## 2026-07-14 Independent Quality, RBAC, And Documentation Adjudication
 
 - Resumed the required issue worktree at
