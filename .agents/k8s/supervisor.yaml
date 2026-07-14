@@ -7,13 +7,13 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: issue-775-launcher
+  name: ${SUPERVISOR_RBAC_NAME}
   namespace: ${K8S_NAMESPACE}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: issue-775-launcher
+  name: ${SUPERVISOR_RBAC_NAME}
   namespace: ${K8S_NAMESPACE}
 rules:
   - apiGroups: [""]
@@ -28,16 +28,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: issue-775-launcher
+  name: ${SUPERVISOR_RBAC_NAME}
   namespace: ${K8S_NAMESPACE}
 subjects:
   - kind: ServiceAccount
-    name: issue-775-launcher
+    name: ${SUPERVISOR_RBAC_NAME}
     namespace: ${K8S_NAMESPACE}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: issue-775-launcher
+  name: ${SUPERVISOR_RBAC_NAME}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -59,7 +59,7 @@ spec:
         issue: "775"
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: issue-775-launcher
+      serviceAccountName: ${SUPERVISOR_RBAC_NAME}
       nodeSelector:
         kubernetes.io/arch: arm64
         node.kubernetes.io/instance-type: VM.Standard.A2.Flex

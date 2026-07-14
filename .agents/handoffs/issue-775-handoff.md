@@ -1,7 +1,71 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-13 four-GB200 TDM recovery on issue/775-tdm
+Last updated: 2026-07-14 independent quality/RBAC/docs adjudication
+
+## 2026-07-14 Independent Quality, RBAC, And Documentation Adjudication
+
+- Resumed the required issue worktree at
+  `/tmp/fastvideo-worktrees/issue775tdm`, clean and synced to pushed branch
+  head `084ce18533c2277a629daeb275f56a0a04ce0eac` before adjudication.
+- Verified `gh` identity as `macthecadillac`. Independently reread issue #775
+  and both comments. The issue remains open and assigned to
+  `macthecadillac`; no commenter proposed an implementation. Refreshed the
+  complete open PR list and targeted searches for `775`, `TDM`, and head
+  `issue/775-tdm`; no related open PR exists and no GitHub state was changed.
+- Independently accepted all three raw reviewer findings:
+  - **Post-training quality validation:** accepted. The current
+    `run_infer.sh` verifies exact video count, decode metadata, frame count,
+    dimensions, and FPS but does not gate visual quality. A concurrent
+    exact-head attempt used a script whose SHA-256
+    `e252eec73d869959a0405affdc4c498d4029ae1ca39e019dcc30b5a64d09018f`
+    exactly matches `run_infer.sh` at `084ce1853`. It completed with `rc=0`
+    at `2026-07-14T03:27:57Z` and printed
+    `INFERENCE_OUTPUT_OK videos=20`. Visual inspection of the four midpoint
+    comparison sheets showed checkpoint-100, checkpoint-300, and
+    checkpoint-500 student outputs remained heavily blurred with no material
+    progression, while the 50-step teacher outputs were clear. Treat this as
+    failed content-quality validation despite the structural pass. The
+    cluster workload was subsequently cleaned up; `kubectl -n vllm get
+    pods,jobs -l issue=775` reported no resources. The shared
+    `DmdDenoisingStage` still needs deterministic FastWan T2V and TI2V SSIM
+    coverage. The public L40S reference dataset currently has no FastWan T2V
+    or TI2V reference folders, so first-time seeding must follow the guarded
+    visual-review workflow before upload.
+  - **Concurrent supervisor RBAC:** accepted. `run_k8s.sh` creates unique run,
+    pod, staging, supervisor Job, and ConfigMap names, but
+    `supervisor.yaml` used one shared `issue-775-launcher` ServiceAccount,
+    Role, and RoleBinding. A second launch could overwrite `resourceNames`
+    and revoke the first supervisor's pod access. The patch derives
+    `SUPERVISOR_RBAC_NAME` from `POD_NAME`, validates its Kubernetes name
+    length, whitelists it in `_envsubst.py`, renders it into every RBAC
+    reference, and reports it in the launch summary.
+  - **TDM option documentation:** accepted. `_sample_tdm_context()` always
+    samples the source trajectory index. `use_randmid` controls only whether
+    the intermediate sigma is randomly sampled in
+    `[sigma_next, sigma_source)` or fixed to `sigma_next`. `separate` samples
+    a target in `[sigma_intermediate, sigma_source)`, while `to_terminal`
+    samples across `[sigma_intermediate, sigma_terminal)` and excludes the
+    exact terminal endpoint. `docs/training/train_infra.md` now states those
+    implemented intervals instead of claiming `use_randmid` chooses the
+    source or `to_terminal` always chooses the highest trainable sigma.
+- RBAC/docs validation completed:
+  - `bash -n .agents/k8s/run_k8s.sh`: passed.
+  - `git diff --check`: passed.
+  - Rendered two synthetic concurrent supervisor manifests, `concurrent-a`
+    and `concurrent-b`. Each has a distinct ServiceAccount, Role,
+    RoleBinding, supervisor Job, GPU `resourceNames`, and staging
+    `resourceNames`; no `${SUPERVISOR_RBAC_NAME}` placeholder remained.
+  - `kubectl create --dry-run=client` accepted both manifests.
+  - `kubectl apply --dry-run=server` accepted both manifests in namespace
+    `vllm`; no resources were created.
+  - `uvx pre-commit run --files .agents/k8s/_envsubst.py
+    .agents/k8s/run_k8s.sh .agents/k8s/supervisor.yaml
+    docs/training/train_infra.md`: passed all applicable hooks.
+- Current next actions: GPG-sign and push the focused RBAC/docs/handoff
+  commit, then add deterministic FastWan T2V/TI2V SSIM cases. Run those cases
+  on Modal L40S, download their first-time references, pause for visual review,
+  and upload only after explicit approval. Do not open a PR.
 
 This file intentionally replaces the earlier long chronological log. Older
 per-run details are preserved in branch commits and Modal artifact paths; this

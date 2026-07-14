@@ -22,6 +22,7 @@ POD_NAME="${POD_NAME:-${RUN_NAME}}"
 STAGE_POD_NAME="${STAGE_POD_NAME:-${POD_NAME}-stage}"
 SUPERVISOR_JOB_NAME="${SUPERVISOR_JOB_NAME:-${POD_NAME}-supervisor}"
 SUPERVISOR_CONFIGMAP="${SUPERVISOR_CONFIGMAP:-${POD_NAME}-launch}"
+SUPERVISOR_RBAC_NAME="${SUPERVISOR_RBAC_NAME:-${POD_NAME}-launcher}"
 SUPERVISOR_TIMEOUT_SECONDS="${SUPERVISOR_TIMEOUT_SECONDS:-172800}"
 RESTART_STAGING="${RESTART_STAGING:-0}"
 PVC_NAME="${PVC_NAME:-lustre-pvc-vllm}"
@@ -39,7 +40,8 @@ for command in kubectl python3; do
         exit 1
     }
 done
-for name in "${POD_NAME}" "${STAGE_POD_NAME}" "${SUPERVISOR_JOB_NAME}" "${SUPERVISOR_CONFIGMAP}"; do
+for name in "${POD_NAME}" "${STAGE_POD_NAME}" "${SUPERVISOR_JOB_NAME}" "${SUPERVISOR_CONFIGMAP}" \
+    "${SUPERVISOR_RBAC_NAME}"; do
     if (( ${#name} > 63 )); then
         echo "ERROR: Kubernetes resource name '${name}' exceeds 63 characters" >&2
         exit 1
@@ -68,6 +70,7 @@ render_manifest() {
     SHARED_HF_HOME="${SHARED_HF_HOME}" \
     SUPERVISOR_CONFIGMAP="${SUPERVISOR_CONFIGMAP}" \
     SUPERVISOR_JOB_NAME="${SUPERVISOR_JOB_NAME}" \
+    SUPERVISOR_RBAC_NAME="${SUPERVISOR_RBAC_NAME}" \
     SUPERVISOR_TIMEOUT_SECONDS="${SUPERVISOR_TIMEOUT_SECONDS}" \
         python3 .agents/k8s/_envsubst.py < "${source}" > "${destination}"
 }
@@ -88,6 +91,7 @@ Cluster:          $(kubectl config current-context)
 Run name:         ${RUN_NAME}
 Stage pod:        ${STAGE_POD_NAME}
 Supervisor Job:   ${SUPERVISOR_JOB_NAME}
+Supervisor RBAC:  ${SUPERVISOR_RBAC_NAME}
 GPU pod:          ${POD_NAME}
 Commit:           ${COMMIT}
 PVC:              ${PVC_NAME}
