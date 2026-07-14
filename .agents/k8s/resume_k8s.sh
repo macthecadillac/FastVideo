@@ -239,7 +239,7 @@ kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
     python3 "${POD_OUTPUT_ROOT}/repo/.agents/k8s/validate_output.py" \
         "${POD_OUTPUT_ROOT}/output"
 
-INFER_DONE="${POD_OUTPUT_ROOT}/validation_step500/.infer_done"
+INFER_DONE="${POD_OUTPUT_ROOT}/validation_step200/.infer_done"
 if [[ "${SKIP_INFERENCE}" == "1" ]]; then
     echo "=== Inference skipped ==="
 elif [[ "${RERUN_INFERENCE}" != "1" ]] && \
@@ -258,9 +258,9 @@ if [[ "${SKIP_DOWNLOAD}" != "1" ]]; then
         tar -C "${POD_OUTPUT_ROOT}/output" -cf - . | \
         tar -C "${LOCAL_OUTPUT}/output" -xf -
     if kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-        test -d "${POD_OUTPUT_ROOT}/validation_step500"; then
+        test -d "${POD_OUTPUT_ROOT}/validation_step200"; then
         kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \
-            tar -C "${POD_OUTPUT_ROOT}" -cf - validation_step500 | \
+            tar -C "${POD_OUTPUT_ROOT}" -cf - validation_step200 | \
             tar -C "${LOCAL_OUTPUT}/validation" -xf -
     fi
     kubectl --namespace "${K8S_NAMESPACE}" exec "${POD_NAME}" -- \

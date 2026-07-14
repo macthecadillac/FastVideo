@@ -1,7 +1,7 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-14 next-step K8s canary launched
+Last updated: 2026-07-14 validation-step path/docs adjudication
 
 ## 2026-07-14 Next-Step K8s Canary Launch
 
@@ -3913,3 +3913,13 @@ For model/pipeline changes, also check:
   `dbcd9ac173e5689920dde0992c7cbaee4d360771`; the accepted retry
   finding is fixed at `59be616b02926e3c8cb3564e46f6a13273b537ed`.
   No PR was opened.
+
+
+## 2026-07-14 Independent Validation-Step Path And Next-Step Docs Adjudication
+
+- User requested independent adjudication of two reviewer findings against issue #775 at pushed branch head `8e09ca7ccef6861be47ab006b39536a34f6a5b4f`. Worktree `/tmp/fastvideo-worktrees/issue775tdm` was clean and matched the GitHub fork ref before edits.
+- Verified `gh` identity as `macthecadillac`; issue #775 remains open and assigned to `macthecadillac` with the same maintainer-interest and stale-bot comments. Targeted open PR checks for `macthecadillac:issue/775-tdm` and `775 OR TDM OR trajectory distribution matching` returned `[]`. No GitHub issue or PR state was changed.
+- Accepted reviewer finding 1. Current `.agents/k8s/run_infer.sh` writes inference artifacts and `.infer_done` under `${POD_OUTPUT_ROOT}/validation_step200`, but `.agents/k8s/resume_k8s.sh` still checked and downloaded `validation_step500`. Patched `resume_k8s.sh` to use `validation_step200` for the idempotency marker, directory existence check, and downloaded tar subtree.
+- Accepted reviewer finding 2. Current `TDMMethod._sample_tdm_context()` uses deterministic rank-stratified trajectory indices in `noise_interval_mode=next_step`, while `docs/training/train_infra.md` still said the source trajectory point is always sampled randomly. Updated the `use_randmid` table row and the TDM note to distinguish random source sampling in `separate`/`to_terminal` from deterministic rank-stratified source selection in `next_step`.
+- Validation completed without local FastVideo tests: `bash -n .agents/k8s/resume_k8s.sh` passed; `git diff --check` passed; `uvx pre-commit run --files .agents/k8s/resume_k8s.sh docs/training/train_infra.md` passed codespell, PyMarkdown, filename-space, and suggestion hooks, with Python/action hooks skipped as no matching files.
+- No pod, Modal job, local project test, PR, or GitHub write was run. Next action is to GPG-sign and push the scoped fix commit, then report decisions and validation to the user.
