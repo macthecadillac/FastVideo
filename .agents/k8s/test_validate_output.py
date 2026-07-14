@@ -19,7 +19,7 @@ _SPEC.loader.exec_module(_VALIDATOR)
 def _write_valid_output(output_dir: Path) -> None:
     output_dir.mkdir()
     (output_dir / ".train_done").write_text("rc=0\n", encoding="utf-8")
-    for step in (100, 200, 300, 400, 500):
+    for step in (50, 100, 200):
         checkpoint = output_dir / f"checkpoint-{step}"
         dcp_dir = checkpoint / "dcp"
         dcp_dir.mkdir(parents=True)
@@ -33,7 +33,7 @@ def _write_valid_output(output_dir: Path) -> None:
     tracker_dir = output_dir / "tracker"
     tracker_dir.mkdir()
     with (tracker_dir / "metrics.jsonl").open("w", encoding="utf-8") as handle:
-        for step in range(1, 501):
+        for step in range(1, 201):
             handle.write(json.dumps({"step": step, "metrics": {"loss": 1.0}}))
             handle.write("\n")
 
@@ -44,7 +44,7 @@ def test_rejects_jsonl_nonfinite_float_marker(tmp_path: Path) -> None:
     marker = _sanitize_jsonl_value(float("nan"))
     assert marker == {"_type": "nonfinite_float", "value": "nan"}
     with (output_dir / "tracker" / "metrics.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"step": 500, "metrics": {"loss": marker}}))
+        handle.write(json.dumps({"step": 200, "metrics": {"loss": marker}}))
         handle.write("\n")
 
     with pytest.raises(SystemExit, match="nonfinite_float"):

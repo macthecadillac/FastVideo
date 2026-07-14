@@ -14,6 +14,7 @@ from fastvideo.train.methods.distribution_matching.dmd2 import DMD2Method
 from fastvideo.train.models.base import ModelBase
 from fastvideo.train.utils.config import (
     get_optional_float,
+    get_optional_int,
     require_bool,
     require_choice,
 )
@@ -290,14 +291,18 @@ class TDMMethod(DMD2Method):
         if update_student:
             with torch.no_grad():
                 trajectory = self._student_trajectory(training_batch)
-            generator_loss, generator_metrics, student_ctx = self._tdm_generator_loss(trajectory, training_batch)
+            generator_loss, generator_metrics, student_ctx = self._tdm_generator_loss(
+                trajectory,
+                training_batch,
+                iteration=self._generator_update_iteration(iteration),
+            )
 
         (
             fake_score_loss,
             critic_ctx,
             critic_outputs,
             fake_score_metrics,
-        ) = self._tdm_fake_score_loss(training_batch)
+        ) = self._tdm_fake_score_loss(training_batch, iteration=iteration)
 
         total_loss = generator_loss + fake_score_loss
         loss_map = {
@@ -521,26 +526,46 @@ class TDMMethod(DMD2Method):
             sigmas=sigma_tensor,
         )
 
+    def _generator_update_iteration(
+        self,
+        iteration: int,
+    ) -> int:
+        interval = get_optional_int(
+            self.method_config,
+            "generator_update_interval",
+            where="method.generator_update_interval",
+        )
+        if interval is None or interval <= 0:
+            return max(0, int(iteration))
+        return max(0, int(iteration)) // interval
+
     def _transition_aligned_trajectory_indices(
         self,
         *,
         batch_size: int,
         num_trajectory_points: int,
+        iteration: int = 0,
         device: torch.device,
     ) -> torch.Tensor:
         rank = 0
+        world_size = 1
         if dist.is_available() and dist.is_initialized():
             rank = int(dist.get_rank())
+            world_size = int(dist.get_world_size())
 
         distributed_cfg = getattr(self.training_config, "distributed", None)
         sp_size = max(1, int(getattr(distributed_cfg, "sp_size", 1) or 1))
+        sample_group_count = max(1, world_size // sp_size)
         sample_group_rank = rank // sp_size
-        start = sample_group_rank * batch_size
+        iteration_offset = max(0, int(iteration)) * sample_group_count * batch_size
+        start = iteration_offset + sample_group_rank * batch_size
         return (torch.arange(batch_size, device=device, dtype=torch.long) + start) % num_trajectory_points
 
     def _sample_tdm_context(
         self,
         trajectory: TDMTrajectory,
+        *,
+        iteration: int = 0,
     ) -> TDMSampleContext:
         device = trajectory.sigmas.device
         interval_eps = 1e-6
@@ -550,6 +575,7 @@ class TDMMethod(DMD2Method):
             trajectory_indices = self._transition_aligned_trajectory_indices(
                 batch_size=batch_size,
                 num_trajectory_points=len(trajectory.sigmas),
+                iteration=iteration,
                 device=device,
             )
         else:
@@ -664,10 +690,15 @@ class TDMMethod(DMD2Method):
     def _tdm_fake_score_loss(
         self,
         batch: TrainingBatch,
+        *,
+        iteration: int | None = None,
     ) -> tuple[torch.Tensor, Any, dict[str, Any], dict[str, LogScalar]]:
         with torch.no_grad():
             trajectory = self._student_trajectory(batch)
-            context = self._sample_tdm_context(trajectory)
+            if iteration is None:
+                context = self._sample_tdm_context(trajectory)
+            else:
+                context = self._sample_tdm_context(trajectory, iteration=iteration)
 
         critic_timestep = self._model_timestep_for_sigma(context.sigma_target, self.critic)
         batch.timesteps = critic_timestep
@@ -781,6 +812,8 @@ class TDMMethod(DMD2Method):
         self,
         trajectory: TDMTrajectory,
         batch: TrainingBatch,
+        *,
+        iteration: int | None = None,
     ) -> tuple[torch.Tensor, dict[str, LogScalar], tuple[torch.Tensor, Any]]:
         guidance_scale = get_optional_float(
             self.method_config,
@@ -790,7 +823,10 @@ class TDMMethod(DMD2Method):
         if guidance_scale is None:
             guidance_scale = 1.0
 
-        context = self._sample_tdm_context(trajectory)
+        if iteration is None:
+            context = self._sample_tdm_context(trajectory)
+        else:
+            context = self._sample_tdm_context(trajectory, iteration=iteration)
         source_timestep = context.timestep_source
         target_timestep = context.timestep_target
 

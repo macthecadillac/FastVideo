@@ -496,6 +496,7 @@ def test_tdm_next_step_noise_interval_uses_rank_stratified_adjacent_boundaries(
     monkeypatch.setattr(tdm_module.dist, "is_available", lambda: True)
     monkeypatch.setattr(tdm_module.dist, "is_initialized", lambda: True)
     monkeypatch.setattr(tdm_module.dist, "get_rank", lambda: 3)
+    monkeypatch.setattr(tdm_module.dist, "get_world_size", lambda: 4)
     batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
     trajectory = method._student_trajectory(batch)
 
@@ -507,6 +508,43 @@ def test_tdm_next_step_noise_interval_uses_rank_stratified_adjacent_boundaries(
     assert_close(context.sigma_target, torch.tensor([0.25, 0.001]))
     assert bool(torch.all(context.sigma_target >= context.sigma_intermediate).item())
     assert bool((method._tdm_fake_score_weights(context) > 0).all().item())
+
+
+def test_tdm_next_step_noise_interval_cycles_undercovered_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    method, _, _ = _build_method(method_overrides={
+        "noise_interval_mode": "next_step",
+        "use_randmid": False,
+    })
+    monkeypatch.setattr(tdm_module.dist, "is_available", lambda: True)
+    monkeypatch.setattr(tdm_module.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(tdm_module.dist, "get_rank", lambda: 0)
+    monkeypatch.setattr(tdm_module.dist, "get_world_size", lambda: 1)
+    batch = method.student.prepare_batch({}, generator=method.cuda_generator, latents_source="zeros")
+    trajectory = method._student_trajectory(batch)
+
+    first_context = method._sample_tdm_context(trajectory, iteration=0)
+    second_context = method._sample_tdm_context(trajectory, iteration=1)
+
+    assert first_context.trajectory_indices.tolist() == [0, 1]
+    assert second_context.trajectory_indices.tolist() == [2, 3]
+    assert_close(first_context.sigma_source, torch.tensor([1.0, 0.75]))
+    assert_close(second_context.sigma_source, torch.tensor([0.5, 0.25]))
+
+
+def test_tdm_next_step_generator_update_iteration_respects_update_interval() -> None:
+    method, _, _ = _build_method(
+        generator_update_interval=2,
+        method_overrides={
+            "noise_interval_mode": "next_step",
+            "use_randmid": False,
+        },
+    )
+
+    assert method._generator_update_iteration(0) == 0
+    assert method._generator_update_iteration(2) == 1
+    assert method._generator_update_iteration(4) == 2
 
 
 def test_tdm_next_step_noise_interval_requires_fixed_intermediate() -> None:

@@ -367,8 +367,9 @@ only the student prediction used by the generator loss carries gradients.
 Fake-score training samples a source point from the generated trajectory. In
 `separate` and `to_terminal` modes, source points are sampled randomly per
 batch element. In `next_step` mode, source points use deterministic
-rank-stratified trajectory indices so a canary covers adjacent transitions
-without random gaps. With `use_randmid: true`, TDM then samples an
+rank-stratified trajectory indices and cycle by training iteration, so small
+rank/batch configurations eventually cover adjacent transitions without random
+gaps. With `use_randmid: true`, TDM then samples an
 intermediate sigma in
 `[sigma_next, sigma_source)`; otherwise the intermediate sigma is
 `sigma_next`. For `noise_interval_mode: separate`, the target is sampled in
