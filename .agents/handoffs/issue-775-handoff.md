@@ -3502,3 +3502,66 @@ For model/pipeline changes, also check:
   strict output validation followed by step-500 inference through the durable
   cluster-side resume workflow, then pod cleanup to release the GPUs.
 - No PR was opened.
+
+## 2026-07-14 Independent Inference-Retry Adjudication
+
+- Resumed the dedicated worktree at
+  `/tmp/fastvideo-worktrees/issue775tdm`, clean and synced to pushed branch
+  head `dbcd9ac173e5689920dde0992c7cbaee4d360771`.
+- Verified `gh` identity as `macthecadillac`, reread issue #775 and both
+  comments, and refreshed related open PR state. The issue remains open and
+  assigned to `macthecadillac`; comments are unchanged; no open PR targets
+  issue 775, TDM, or `issue/775-tdm`.
+- Independently adjudicated the two reviewer findings:
+  - The high-severity `flow_shift` finding was valid at the review scope
+    `e7534385ed51a9254730b857c51c60c0efe2c054`, but current pushed commit
+    `dbcd9ac173e5689920dde0992c7cbaee4d360771` already resolves it by passing
+    `flow_shift=8.0` to `VideoGenerator.from_pretrained()` and omitting it
+    from `generate_video()` request kwargs. No additional change is needed
+    for this finding.
+  - Accepted the medium-severity retry finding. `VideoGenerator` appends
+    numeric suffixes when a requested path exists, while `run_infer.sh`
+    previously removed only `.infer_done`. A forced rerun or retry after
+    partial reference generation therefore retained stale MP4s and made the
+    exact-20-output gate fail deterministically.
+- Implemented the narrow retry correction in `.agents/k8s/run_infer.sh`:
+  define the three script-owned student/base/teacher output roots once and
+  remove only those roots before starting generation. Training outputs,
+  logs, the copied validation prompt file, and unrelated validation content
+  are not removed.
+- Validation:
+  - Local non-test checks `bash -n .agents/k8s/run_infer.sh` and
+    `git diff --check` passed. No local project tests were run.
+  - First Modal L40S retry harness app `ap-xzCgs2s7JWG6DAgINTImJh`
+    exercised the patched cleanup but failed because its suffix assertion
+    incorrectly classified canonical student `video_0.mp4` names as
+    collision suffixes. The product patch was unchanged.
+  - Corrected Modal L40S app `ap-bMR9mepWp2kg8aXiv391T0` checked out
+    exact base commit `dbcd9ac173e5689920dde0992c7cbaee4d360771`,
+    applied only the `run_infer.sh` patch, and validated a stale initial
+    tree, a second invocation, and a partial retry. Each regenerated fixture
+    contained exactly 20 canonical MP4s with no collision suffixes, and
+    non-output sentinels remained intact. Result:
+    `INFERENCE_RETRY_CLEANUP_OK clean=20 second=20 partial_retry=20`.
+  - Modal L40S app `ap-1g7WL1Eu4wJDGha81bXsYH` ran changed-file
+    `pre-commit run --files` for `run_infer.sh` and this handoff.
+    The filename-space hook passed; language/document hooks reported their
+    configured no-files-to-check exclusions.
+- Final pre-commit GitHub refresh: identity remained
+  `macthecadillac`; issue #775 stayed open and assigned with the same two
+  comments; no targeted open PR matched issue 775, TDM, or the branch.
+- While validation was running, the shared issue worktree advanced through a
+  concurrent signed/pushed commit
+  `59be616b02926e3c8cb3564e46f6a13273b537ed`
+  (`[fix]: make TDM inference retries self-contained`). Its cleanup is
+  behaviorally identical to the accepted patch above. The commit has a good
+  GPG signature from Mac Lee using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887`; no duplicate code commit
+  is needed.
+- Modal L40S app `ap-X8Tc2sDMyyM3rr4TMtvkd0` repeated the clean,
+  second-invocation, and partial-retry harness directly against exact pushed
+  commit `59be616b02926e3c8cb3564e46f6a13273b537ed`, with no local patch.
+  Result:
+  `INFERENCE_RETRY_EXACT_HEAD_OK clean=20 second=20 partial_retry=20`.
+- Pending before finish: sign and push this adjudication handoff update, then
+  verify the final branch and signature state. No PR will be opened.
