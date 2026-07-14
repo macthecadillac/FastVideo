@@ -115,7 +115,7 @@ def test_wan_t2v_inference_similarity(
 
 
 @pytest.mark.parametrize("prompt", WAN_T2V_TEST_PROMPTS)
-@pytest.mark.parametrize("attention_backend_name", ["FLASH_ATTN"])
+@pytest.mark.parametrize("attention_backend_name", ["VIDEO_SPARSE_ATTN"])
 @pytest.mark.parametrize("model_id", list(FASTWAN_T2V_MODEL_TO_PARAMS.keys()))
 def test_fastwan_t2v_inference_similarity(
     prompt: str,

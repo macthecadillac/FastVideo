@@ -3,6 +3,39 @@
 Compacted: 2026-07-01
 Last updated: 2026-07-14 fresh SSIM/RBAC lifecycle adjudication
 
+## 2026-07-14 Final Kubernetes Inference Validation
+
+- The pod-local detached validation used the exact pushed `run_infer.sh`
+  content with SHA-256
+  `e252eec73d869959a0405affdc4c498d4029ae1ca39e019dcc30b5a64d09018f`.
+  Its launcher was reparented to PID 1, so it remained independent of the
+  workstation connection.
+- The final run started at `2026-07-14T03:18:08Z` and completed at
+  `2026-07-14T03:27:57Z` in 9m49s. The launcher marker records `rc=0`, the
+  `.infer_done` marker exists, and the decoder gate printed
+  `INFERENCE_OUTPUT_OK videos=20`.
+- The 20 outputs are twelve four-step TDM student videos (four prompts at
+  checkpoints 100, 300, and 500), four base Wan four-step controls, and four
+  Wan 50-step teacher controls. Every video decoded as 832x448, 77 frames,
+  and 16 FPS.
+- Fixed-seed MS-SSIM means were:
+  - checkpoint 100 versus checkpoint 500: `0.9790`;
+  - checkpoint 500 versus base Wan four-step: `0.5587`;
+  - checkpoint 500 versus Wan 50-step teacher: `0.3227`;
+  - base Wan four-step versus Wan 50-step teacher: `0.4487`.
+  The near-identity between checkpoints 100 and 500 confirms little learned
+  progression. Midpoint inspection of all four prompts showed the student
+  remained heavily blurred at every checkpoint while the teacher was sharp.
+  Structural inference validation passed, but content-quality validation
+  failed and the 500-step student must not be treated as an approved baseline.
+- The final outputs, `quality_metrics.json`, completion markers, and final log
+  are durably copied under
+  `/home/sandbox/FastVideo/outputs/issue-775-tdm/k8s/tdm-bsz4-500-k8s-20260712144347/validation/`.
+  A SHA-256 manifest comparison matched all 20 remote and local MP4 files.
+- After the durable copy was verified, the completed four-GB200 pod and its
+  supervisor Job were deleted. No issue-775 pod or Job remains in namespace
+  `vllm`; shared RWX storage remains bound. No PR was opened.
+
 ## 2026-07-14 Fresh SSIM And RBAC Lifecycle Adjudication
 
 - Resumed Stage 3 adjudication in `/tmp/fastvideo-worktrees/issue775tdm` on
@@ -93,8 +126,50 @@ Last updated: 2026-07-14 fresh SSIM/RBAC lifecycle adjudication
   commit's return extraction adjustments: regular and variable-length paths
   select `[:2]`, and FP4 selects `[0]`. This preserves existing backend
   behavior and is required for exact-branch generation in the current CI
-  image. A fresh exact-commit L40S run remains pending after this change is
-  signed and pushed.
+  image. The backport was GPG-signed as
+  `51aa8d4d66a3ce3dcfc22fb09f1da7cbe459a9bb`
+  (`[fix]: handle FA4 diagnostic outputs`) and pushed.
+- Exact-commit app `ap-nW251QlGYe8qnkYzDZoHs9` confirmed the FA4 backport:
+  - FastWan TI2V completed all three denoising steps, saved one MP4, and then
+    failed only at the expected missing-reference check. The candidate is
+    preserved at `/tmp/issue775-modal-generated/51aa8d4-ti2v.mp4`; it has not
+    been uploaded.
+  - FastWan T2V terminated with exit `-3` before producing a video. App
+    `ap-05F74TRIOtL4ACN2hddhKw` was a diagnosis retry cancelled before remote
+    execution because the temporary runner requested four L40S GPUs for a
+    single two-GPU test and remained capacity-queued.
+  - Two-L40S app `ap-vLXPoDFFt9oT3zqtA0oOgp` reproduced the T2V failure and
+    retained its traceback. The checkpoint key
+    `blocks.0.to_gate_compress.bias` is not present in a model instantiated
+    for `FLASH_ATTN`. That gate belongs to `WanTransformerBlock_VSA`, proving
+    this released 1.3B checkpoint requires `VIDEO_SPARSE_ATTN`; the prior test
+    selected an incompatible backend rather than exposing only a missing
+    reference.
+- The T2V SSIM case now selects `VIDEO_SPARSE_ATTN`.
+  - Validation-only apps `ap-bmOFANE3DIeUkpSjCi0iGA` and
+    `ap-JrRkOALS3cLvt1Ku8ANc9w` failed during temporary checkout patching and
+    never executed repository code.
+  - Two-L40S app `ap-q5yv2UJQzbwL3SMH0s9Mf7` applied and verified the exact
+    staged one-line backend correction. It loaded the 1.49B checkpoint,
+    completed all three VSA denoising steps, saved one 45-frame MP4, and then
+    failed only at the expected missing-reference check. This validates the
+    correction against the current CI image before commit.
+  - Both generated candidates are preserved but not uploaded:
+    `/tmp/issue775-modal-generated/51aa8d4-ti2v.mp4` is 352213 bytes with
+    SHA-256 `69d82ea454045b57be0de8a22388d36a6f86f4feb8645da42ff0d78d5873ccd9`;
+    `/tmp/issue775-modal-generated/51aa8d4-t2v-vsa.mp4` is 209434 bytes with
+    SHA-256 `018c45c0fd9afa11c4f3028f4f825708aa3e45ba15242dd8be1ce67967665600`.
+    Local `ffprobe` is unavailable; Modal logs provide frame/save evidence.
+- GPG signing was previously blocked by the mounted agent socket. Direct
+  `gpg-connect-agent` reported `connection to the agent is in restricted mode`,
+  `ERR 67109115 Forbidden <GPG Agent>`, and
+  `ERR 100696144 Operation not supported by device <SCD>`. `gpg --card-status`
+  reported `No such device`. A later retry in this session succeeded with
+  `gpg --clearsign`, allowing the staged VSA correction and this handoff
+  evidence to proceed as a signed commit.
+- Exact-head reference generation and guarded visual approval/upload remain
+  pending after the VSA correction is signed and pushed. No reference was
+  uploaded.
 - No PR was opened.
 ## 2026-07-14 Independent Quality, RBAC, And Documentation Adjudication
 
