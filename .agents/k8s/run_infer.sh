@@ -10,8 +10,12 @@ OUT_DIR="${POD_OUTPUT_ROOT}/output"
 VALIDATION_DIR="${POD_OUTPUT_ROOT}/validation_step500"
 SHARED_HF_HOME="${SHARED_HF_HOME:-/workspace/run/issue-775/shared-cache/hf}"
 INFER_DONE="${VALIDATION_DIR}/.infer_done"
+STUDENT_ROOT="${VALIDATION_DIR}/student_tdm_4step"
+BASE_OUT="${VALIDATION_DIR}/base_wan_4step"
+TEACHER_OUT="${VALIDATION_DIR}/teacher_wan_50step"
 mkdir -p "${LOG_DIR}" "${VALIDATION_DIR}"
 rm -f "${INFER_DONE}"
+rm -rf -- "${STUDENT_ROOT}" "${BASE_OUT}" "${TEACHER_OUT}"
 
 cd "${REPO_DIR}"
 export PYTHONPATH="${REPO_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -31,7 +35,7 @@ cp -f examples/training/finetune/Wan2.1-VSA/Wan-Syn-Data/validation_4.json \
 echo "[run_infer] start $(date -u +%FT%TZ)"
 for step in 100 300 500; do
     CHECKPOINT_DIR="${OUT_DIR}/checkpoint-${step}"
-    STUDENT_OUT="${VALIDATION_DIR}/student_tdm_4step/checkpoint-${step}"
+    STUDENT_OUT="${STUDENT_ROOT}/checkpoint-${step}"
     RUNTIME_OUT="${STUDENT_OUT}/runtime"
     mkdir -p "${STUDENT_OUT}" "${RUNTIME_OUT}"
     echo "[run_infer] student checkpoint-${step}, four steps"
@@ -58,8 +62,6 @@ for step in 100 300 500; do
 done
 python3 .agents/k8s/validate_output.py "${OUT_DIR}"
 
-BASE_OUT="${VALIDATION_DIR}/base_wan_4step"
-TEACHER_OUT="${VALIDATION_DIR}/teacher_wan_50step"
 mkdir -p "${BASE_OUT}" "${TEACHER_OUT}"
 cat > /tmp/issue775_reference_infer.py <<'PYREF'
 import json
@@ -120,34 +122,28 @@ python3 /tmp/issue775_reference_infer.py \
     2>&1 | tee "${LOG_DIR}/reference_infer.log"
 
 python3 - "${VALIDATION_DIR}" <<'PYVERIFY'
-import json
-import subprocess
 import sys
 from fractions import Fraction
 from pathlib import Path
+
+import av
 
 root = Path(sys.argv[1])
 files = sorted(root.rglob("*.mp4"))
 if len(files) != 20:
     raise SystemExit(f"expected 20 MP4 files, found {len(files)}")
 for path in files:
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,r_frame_rate,nb_frames",
-            "-of", "json", str(path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    stream = json.loads(result.stdout)["streams"][0]
-    actual = (
-        int(stream["width"]),
-        int(stream["height"]),
-        int(stream["nb_frames"]),
-        Fraction(stream["r_frame_rate"]),
-    )
+    container = av.open(str(path))
+    try:
+        stream = container.streams.video[0]
+        actual = (
+            stream.codec_context.width,
+            stream.codec_context.height,
+            sum(1 for _ in container.decode(video=0)),
+            Fraction(stream.average_rate),
+        )
+    finally:
+        container.close()
     expected = (832, 448, 77, Fraction(16, 1))
     if actual != expected:
         raise SystemExit(f"invalid video metadata for {path}: {actual}")
