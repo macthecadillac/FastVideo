@@ -1,7 +1,54 @@
 # Issue 775 TDM Handoff
 
 Compacted: 2026-07-01
-Last updated: 2026-07-14 next-step K8s canary implementation
+Last updated: 2026-07-14 next-step K8s canary launched
+
+## 2026-07-14 Next-Step K8s Canary Launch
+
+- The canary implementation was GPG-signed as
+  `6425719f475312c76d0d3cd2fe2864aea60d5064`
+  (`[fix]: align TDM canary with inference transitions`) and pushed to
+  `macthecadillac/FastVideo:issue/775-tdm`.
+- Cluster pre-launch inspection found no existing issue-775 pods or Jobs in
+  namespace `vllm`. The account can list GB200 nodes and `vllm` pods but is
+  forbidden from cluster-wide pod listing, so full cross-namespace allocated
+  GPU accounting could not be computed. Many GB200 nodes were Ready and
+  schedulable; the run ultimately scheduled successfully on `10.0.130.11`.
+- Launched with:
+  `COMMIT=6425719f475312c76d0d3cd2fe2864aea60d5064 KUBECONFIG=/home/sandbox/.kube/config K8S_NAMESPACE=vllm bash .agents/k8s/run_k8s.sh`.
+  Run name: `tdm-nextstep-bsz4-200-k8s-1784013533`. Pod output root:
+  `/workspace/run/issue-775/tdm-nextstep-bsz4-200-k8s-1784013533`. Local
+  output root reserved by the launcher:
+  `/tmp/fastvideo-worktrees/issue775tdm/outputs/issue-775-tdm/k8s/tdm-nextstep-bsz4-200-k8s-1784013533`.
+- Staging completed quickly from cache. `.stage_done` was written at
+  `2026-07-14T07:20:43Z` with the exact commit, model snapshot
+  `0fad780a534b6463e45facd96134c9f345acfa5b`, and dataset snapshot
+  `d86c2591c1afa8216e3701cde79d6f15a1142f0a`. The supervisor verified the
+  marker, released the gated GPU pod, and completed. The staging pod was
+  deleted by the supervisor.
+- GPU pod `tdm-nextstep-bsz4-200-k8s-1784013533` started at
+  `2026-07-14T07:21:20Z` on node `10.0.130.11`. Four GB200 GPUs were visible
+  at 189471 MiB each. The two-step preflight used the same `next_step`,
+  `use_randmid=false`, `real_score_guidance_scale=6.0` overrides, passed NCCL,
+  completed both steps, and wrote `.preflight_done`. The dataset parquet cache
+  was rebuilt because old cached paths pointed outside the snapshot root; this
+  completed successfully.
+- Main training started after preflight and was healthy at the latest poll:
+  step 12/200 at `2026-07-14T07:27:52Z`, pod phase Running, no restarts, no
+  completed checkpoint yet. Recent `step_time_sec` values were about 12.27s.
+  Metrics show the rank-0 `next_step` transition at source sigma 1.0 to target
+  sigma 0.96; other ranks cover the remaining trajectory indices by the new
+  rank-stratified sampler.
+- Runtime estimate from observed training steps: about 39 minutes remaining
+  for raw training from step 12, plus checkpoint overhead at 50/100/200.
+  Expected training completion is roughly 45-50 minutes after `07:27Z`, around
+  `08:10Z-08:20Z`. Post-training inference validation still needs to be run
+  with `RUN_NAME=tdm-nextstep-bsz4-200-k8s-1784013533 bash .agents/k8s/resume_k8s.sh`;
+  that validation previously took about 10 minutes once training was complete.
+- Next steps: monitor to checkpoint 50, then training completion; run
+  `resume_k8s.sh` to validate checkpoints 50/100/200, generate 20 MP4s,
+  compute/inspect quality metrics, download artifacts, and then clean up the
+  GPU pod. No PR has been opened.
 
 ## 2026-07-14 Next-Step K8s Canary Implementation
 
