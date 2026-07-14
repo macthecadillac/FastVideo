@@ -3487,3 +3487,18 @@ For model/pipeline changes, also check:
   budget 1h35m-2h including checkpoint overhead and normal variance.
 - No PR was opened. The worktree is ready for monitoring while the cluster run
   continues independently.
+
+### Completed Training And Pending Validation
+
+- The 500-step training run completed successfully at
+  `2026-07-13T19:00:47Z`; the durable `.train_done` marker records `rc=0`.
+- Final metrics contain all 500 timed steps with a 12.36-second warm mean step
+  time. Complete checkpoints exist at steps 100, 200, 300, 400, and 500.
+- Pod `tdm-bsz4-500-k8s-20260712144347` remains healthy `Running 1/1` with
+  zero restarts on GB200 node `10.0.130.11`. PID 1 is alive and intentionally
+  sleeping after successful training, so the pod is still reserving four GPUs.
+- Post-training step-500 validation/inference has not run:
+  `validation_step500` and its `.infer_done` marker are absent. The next task is
+  strict output validation followed by step-500 inference through the durable
+  cluster-side resume workflow, then pod cleanup to release the GPUs.
+- No PR was opened.
