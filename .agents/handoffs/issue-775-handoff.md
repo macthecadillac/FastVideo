@@ -3563,5 +3563,14 @@ For model/pipeline changes, also check:
   commit `59be616b02926e3c8cb3564e46f6a13273b537ed`, with no local patch.
   Result:
   `INFERENCE_RETRY_EXACT_HEAD_OK clean=20 second=20 partial_retry=20`.
-- Pending before finish: sign and push this adjudication handoff update, then
-  verify the final branch and signature state. No PR will be opened.
+- Signed handoff commit
+  `aa7967db35cc0c387e797af593e8a7b687e2a08e`
+  (`[misc]: record inference retry adjudication`) was pushed to
+  `macthecadillac/FastVideo issue/775-tdm`. Its GPG signature is good
+  from Mac Lee using subkey
+  `99C0619273F09B8BF8F3AC64C943F92E5C32D887`, and the GitHub fork ref
+  was verified at that exact SHA.
+- Adjudication is complete: the flow-shift finding was already resolved at
+  `dbcd9ac173e5689920dde0992c7cbaee4d360771`; the accepted retry
+  finding is fixed at `59be616b02926e3c8cb3564e46f6a13273b537ed`.
+  No PR was opened.
