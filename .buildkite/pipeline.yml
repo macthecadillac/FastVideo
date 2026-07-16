@@ -2,6 +2,9 @@ env:
   IMAGE_VERSION: "py3.12-latest"
   BUILDKITE_CLEAN_CHECKOUT: true
 
+checkout:
+  submodules: true
+
 notify:
   - github_commit_status:
       context: "fastcheck-passed"

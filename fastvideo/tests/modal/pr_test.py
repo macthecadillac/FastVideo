@@ -1,7 +1,103 @@
 import os
+import re
+import shutil
+import subprocess
 import sys
+import time
+from pathlib import Path
 
 import modal
+
+LOCAL_REPO_ROOT = Path(__file__).resolve().parents[3]
+SOURCE_ROOT = Path("/src/FastVideo")
+WORKSPACE_ROOT = Path("/workspace/FastVideo")
+REQUIRED_SOURCE_DIRS = (
+    Path("fastvideo-kernel/include/cutlass/include"),
+    Path("fastvideo-kernel/include/tk/include"),
+    Path("fastvideo/third_party/eval/vbench"),
+)
+
+
+def _run_git(repo_root: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args],
+                            cwd=repo_root,
+                            capture_output=True,
+                            text=True,
+                            check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed with exit code {result.returncode}: "
+            f"{result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def _validate_local_source_checkout(repo_root: Path,
+                                    expected_commit: str) -> None:
+    if re.fullmatch(r"[0-9a-fA-F]{40}", expected_commit) is None:
+        raise RuntimeError(
+            f"BUILDKITE_COMMIT must be a full 40-character SHA: {expected_commit!r}"
+        )
+
+    actual_commit = _run_git(repo_root, "rev-parse", "HEAD")
+    if actual_commit.lower() != expected_commit.lower():
+        raise RuntimeError(
+            f"Buildkite checkout mismatch: HEAD is {actual_commit}, expected {expected_commit}"
+        )
+
+    status = _run_git(repo_root, "status", "--short", "--untracked-files=all",
+                      "--", ".", ":(exclude).agents/handoffs/**")
+    if status:
+        raise RuntimeError(
+            f"Buildkite checkout contains uncommitted source changes:\n{status}")
+
+    submodule_status = _run_git(repo_root, "submodule", "status", "--recursive")
+    invalid_submodules = [
+        line for line in submodule_status.splitlines()
+        if line and line[0] in "-+U"
+    ]
+    if invalid_submodules:
+        raise RuntimeError(
+            "Buildkite checkout has missing or mismatched submodules:\n" +
+            "\n".join(invalid_submodules))
+
+
+def _ignore_local_source(path: Path) -> bool:
+    parts = path.parts
+    return ".git" in parts or any(
+        parts[index:index + 2] == (".agents", "handoffs")
+        for index in range(len(parts) - 1))
+
+
+def _attach_local_source(image: modal.Image,
+                         repo_root: Path = LOCAL_REPO_ROOT) -> modal.Image:
+    return image.add_local_dir(repo_root,
+                               remote_path=str(SOURCE_ROOT),
+                               copy=False,
+                               ignore=_ignore_local_source)
+
+
+def _prepare_workspace(source_root: Path = SOURCE_ROOT,
+                       workspace_root: Path = WORKSPACE_ROOT) -> None:
+    started_at = time.monotonic()
+    if not (source_root / "pyproject.toml").is_file():
+        raise RuntimeError(f"Attached FastVideo source is missing at {source_root}")
+
+    missing_dirs = [
+        str(relative_path) for relative_path in REQUIRED_SOURCE_DIRS
+        if not (source_root / relative_path).is_dir()
+        or not any((source_root / relative_path).iterdir())
+    ]
+    if missing_dirs:
+        raise RuntimeError("Attached source is missing initialized submodules: " +
+                           ", ".join(missing_dirs))
+
+    shutil.rmtree(workspace_root, ignore_errors=True)
+    workspace_root.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_root, workspace_root, symlinks=True)
+    print(f"Prepared writable workspace at {workspace_root} from {source_root} "
+          f"in {time.monotonic() - started_at:.2f}s",
+          flush=True)
+
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -39,7 +135,7 @@ uv_torch_backend_override = resolve_uv_torch_backend(image_tag)
 # budget. `image_ref` is the only env-derived input allowed here, because it
 # *selects* the base digest. Per-job values arrive at runtime via
 # `ci_env_secret` below.
-image = (modal.Image.from_registry(
+base_image = (modal.Image.from_registry(
     image_ref, add_python="3.12"
 ).run_commands("rm -rf /FastVideo").apt_install(
     "cmake", "pkg-config", "build-essential", "curl", "libssl-dev", "ffmpeg"
@@ -50,13 +146,24 @@ image = (modal.Image.from_registry(
     "HF_REPO_ID": "FastVideo/performance-tracking",
 }))
 
-dreamverse_image = (image.run_commands(
+dreamverse_base_image = (base_image.run_commands(
     "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
 ).apt_install("nodejs").run_commands("node --version && npm --version"))
 
+# Runtime attachments are deliberately added after every image build step.
+# Source changes update the mount without rebuilding either shared base image.
+if modal.is_local():
+    _validate_local_source_checkout(
+        LOCAL_REPO_ROOT, os.environ.get("BUILDKITE_COMMIT", ""))
+    image = _attach_local_source(base_image)
+    dreamverse_image = _attach_local_source(dreamverse_base_image)
+else:
+    image = base_image
+    dreamverse_image = dreamverse_base_image
+
 # Per-job/per-invocation values are injected into the container environment at
 # RUNTIME via this secret (attached to every function below), so the image
-# stays identical across jobs. Consumers (run_test_command's checkout,
+# stays identical across jobs. Consumers (workspace identity logging,
 # fastvideo/tests/performance/{compare_baseline,identity}.py, the FA4
 # resolver, `uv pip install`) all read os.environ at runtime, so nothing else
 # changes.
@@ -116,26 +223,10 @@ def run_test_command(test_command: str,
     lane would then test stale kernels. Pass install_command="" for commands
     that manage their own installs.
     """
-    import subprocess
-    import sys
-    import os
-
-    git_repo = os.environ.get("BUILDKITE_REPO")
-    git_commit = os.environ.get("BUILDKITE_COMMIT")
-    pr_number = os.environ.get("BUILDKITE_PULL_REQUEST")
-
-    print(f"Cloning repository: {git_repo}")
-    print(f"Target commit: {git_commit}")
-    if pr_number:
-        print(f"PR number: {pr_number}")
-
-    # For PRs (including forks), use GitHub's PR refs to get the correct commit
-    if pr_number and pr_number != "false":
-        checkout_command = f"git fetch --prune origin refs/pull/{pr_number}/head && git checkout FETCH_HEAD"
-        print(f"Using PR ref for checkout: {checkout_command}")
-    else:
-        checkout_command = f"git checkout {git_commit}"
-        print(f"Using direct commit checkout: {checkout_command}")
+    git_commit = os.environ.get("BUILDKITE_COMMIT", "")
+    print(f"Using attached Buildkite checkout at commit {git_commit}",
+          flush=True)
+    _prepare_workspace()
 
     build_kernel_command = """
     cd fastvideo-kernel &&
@@ -148,10 +239,7 @@ def run_test_command(test_command: str,
     command = f"""
     source $HOME/.local/bin/env &&
     source /opt/venv/bin/activate &&
-    git clone {git_repo} /FastVideo &&
-    cd /FastVideo &&
-    {checkout_command} &&
-    git submodule update --init --recursive &&
+    cd {WORKSPACE_ROOT} &&
     {install_clause}
     {build_kernel_command}
     {test_command}
@@ -286,7 +374,14 @@ def run_self_forcing_tests():
 @app.function(gpu="L40S:1", image=image, timeout=900, secrets=[ci_env_secret])
 def run_unit_test():
     run_test(
-        "pytest ./fastvideo/tests/api/ ./fastvideo/tests/contract/ ./fastvideo/tests/dataset/ ./fastvideo/tests/workflow/ ./fastvideo/tests/entrypoints/ ./fastvideo/tests/train/ ./fastvideo/tests/stages/ ./fastvideo/tests/ops/ ./fastvideo/tests/worker/ ./fastvideo/tests/training/test_trackers.py ./fastvideo/tests/attention/test_sdpa_metadata_mask_contract.py --ignore=./fastvideo/tests/entrypoints/test_openai_api_integration.py --ignore=./fastvideo/tests/train/models --ignore=./fastvideo/tests/train/methods -vs"
+        "pytest ./fastvideo/tests/api/ ./fastvideo/tests/contract/ ./fastvideo/tests/dataset/ "
+        "./fastvideo/tests/workflow/ ./fastvideo/tests/entrypoints/ ./fastvideo/tests/train/ "
+        "./fastvideo/tests/stages/ ./fastvideo/tests/ops/ ./fastvideo/tests/worker/ "
+        "./fastvideo/tests/training/test_trackers.py "
+        "./fastvideo/tests/attention/test_sdpa_metadata_mask_contract.py "
+        "./fastvideo/tests/modal/test_pr_test.py "
+        "--ignore=./fastvideo/tests/entrypoints/test_openai_api_integration.py "
+        "--ignore=./fastvideo/tests/train/models --ignore=./fastvideo/tests/train/methods -vs"
     )
 
 
@@ -301,7 +396,7 @@ def run_dreamverse_app_tests():
         build_kernel=False,
         test_command="""
         uv pip install -e ".[test,dreamverse]" &&
-        export PYTHONPATH=/FastVideo/apps/dreamverse:$PYTHONPATH &&
+        export PYTHONPATH=/workspace/FastVideo/apps/dreamverse:$PYTHONPATH &&
         pytest apps/dreamverse/dreamverse/tests -q &&
         cd apps/dreamverse/web &&
         npm ci &&

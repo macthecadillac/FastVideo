@@ -232,6 +232,19 @@ Process labels:
 
 ## Modal Test Entrypoints
 
+Buildkite checks out the triggering commit with recursive submodules before a
+test step starts. The lanes in `fastvideo/tests/modal/pr_test.py` validate that
+checkout against `BUILDKITE_COMMIT`, attach it to each Modal container at
+`/src/FastVideo` without adding an image layer, and copy it to the container's
+ephemeral `/workspace/FastVideo` before installation, kernel compilation, or
+tests. This keeps every lane on the exact Buildkite revision while isolating
+writable build and test output between containers.
+
+The runtime attachment excludes Git metadata. Required submodule contents must
+therefore be present in the Buildkite checkout. The SSIM orchestrator has its
+own partitioned workspace preparation in `fastvideo/tests/modal/ssim_test.py`
+and does not use this attachment flow.
+
 All Buildkite test jobs go through `.buildkite/scripts/pr_test.sh`, which:
 
 1. Reads Buildkite secrets for Modal, Hugging Face, and W&B when needed.
