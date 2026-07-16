@@ -216,6 +216,10 @@ full-suite `CALIBRATION_NEEDED` normalized artifact. Its prepare step uses
 the skill rechecks the current HF revision and conditionally uploads the whole
 seed batch in one commit.
 
+Seeded and reseeded records enter the same baseline-eligible history used by
+the last-5 rolling median. The current comparator does not store, select, or
+compare against a distinct promoted baseline.
+
 ## Schemas
 
 ### Benchmark config (`.buildkite/performance-benchmarks/tests/*.json`)
@@ -262,12 +266,34 @@ baseline eligible); only static thresholds gate them. Metric-specific threshold
 policies are active. `QUALITY_BLOCKED` remains reserved for future variant
 promotion policy.
 
-The shipped Wan benchmark uses `benchmark_version: 3` because recipe schema 2
-changed the recipe fingerprint by removing the legacy `benchmark_id` display
-name. This intentionally opens a new comparison cohort: after deployment, a
-reviewed scheduled-main full-suite `CALIBRATION_NEEDED` artifact must be seeded
-once before rolling regression gating resumes for that exact identity. Static
-thresholds remain active during calibration.
+#### Initial Wan v2 migration example
+
+The shipped Wan benchmark demonstrates the schema-v2 migration lifecycle. Its
+config declares `config_schema_version: 2`, `workload_id: wan-t2v`,
+`variant_id: 1.3b-sp2`, and `benchmark_version: 3`. Config schema version and
+benchmark version are independent: schema version selects the record format,
+while benchmark version separates measurement and comparison protocols.
+
+Wan uses `benchmark_version: 3` because recipe schema 2 removed the legacy
+`benchmark_id` display name from the recipe fingerprint. That protocol change
+intentionally opened a new comparison cohort. The migration then proceeds as
+follows:
+
+1. Historical v1 records remain visible, but are not compared with the v2
+   record or used to seed its rolling baseline.
+2. The first successful scheduled-main full-suite run for the v2 identity
+   reports `CALIBRATION_NEEDED` and remains `baseline_eligible=false`. Static
+   thresholds continue to gate the run.
+3. A maintainer reviews the normalized artifact and follows the
+   `reseed-performance-baseline` skill to prepare, review, and conditionally
+   upload the first approved baseline seed.
+4. Later runs with the same six-field comparable identity use that seed and
+   subsequent eligible records for normal `PASS` or `REGRESSION` gating.
+
+A new hardware or software profile opens another exact identity and repeats
+the calibration step. A changed recipe under the same workload, variant, and
+benchmark version reports `RECIPE_MISMATCH` instead of starting a second
+trusted recipe cohort.
 
 ### Raw record (`results/perf_*.json`)
 
@@ -493,11 +519,11 @@ When the rolling-baseline phase runs, it emits:
   [`reseed-performance-baseline`](https://github.com/hao-ai-lab/FastVideo/blob/main/.agents/skills/reseed-performance-baseline/SKILL.md)
   skill.
 
-## Adding a new benchmark
+## Adding or updating a benchmark
 
-1. Drop a new JSON config into
-   `.buildkite/performance-benchmarks/tests/<name>.json`. New configs should
-   use v2 identity fields:
+1. Add or edit a JSON config in
+   `.buildkite/performance-benchmarks/tests/<name>.json`. New configs should use
+   v2 identity fields:
 
    ```json
    {
@@ -535,10 +561,43 @@ When the rolling-baseline phase runs, it emits:
    and `benchmark_version` are part of the comparison key; benchmark runs
    fail if any of these identity fields are missing.
 
-2. The pytest test auto-discovers all configs — no test code needed. CI
+2. For an existing v2 benchmark, choose the identity change that represents
+   the contributor intent before modifying its recipe:
+
+   | Change | Identity action |
+   |---|---|
+   | Implementation optimization or static-threshold adjustment that preserves the declared recipe and measurement protocol | Keep `workload_id`, `variant_id`, and `benchmark_version`. |
+   | Workload-family or modality change, such as T2V to I2V | Create a descriptive new `workload_id` and choose an appropriate `variant_id` within it. |
+   | Intentional recipe or quality-family change within the same workload, such as model size, quality tier, inference steps, prompt, dimensions, requested attention backend, precision, or distributed layout | Keep `workload_id` and create a descriptive new `variant_id`. |
+   | Measurement-method, comparison-policy, or recipe-fingerprint schema change while the conceptual variant remains the same | Increment `benchmark_version`. |
+   | Hardware or software runtime change that changes the normalized profile | Keep the config identity; the changed hardware or software profile ID opens a cohort that requires calibration. |
+
+   Profile identity is normalized: Python, PyTorch, and CUDA use major/minor
+   cohorts, while relevant attention and kernel packages use exact versions.
+   GPU driver changes, OS/platform metadata changes, and resolved container
+   image digest changes alone do not change either profile ID. A patch-only
+   runtime change therefore remains in the existing cohort unless it changes
+   an exact-version package or another field included in the normalized
+   hardware or software profile.
+
+   Do not increment `benchmark_version` merely to bypass a recipe mismatch.
+   Keep it tied to protocol semantics. Use `variant_id` for a benchmark recipe
+   that contributors should evaluate as a distinct quality or recipe family
+   within the same workload. Use `workload_id` when the benchmark workload or
+   modality changes.
+
+   The harness generates `recipe_fingerprint` from the declared benchmark,
+   model, initialization, generation, measured prompt, and requested attention
+   settings using deterministic canonical JSON. Mapping order, output paths,
+   the `benchmark_id` display name, runtime-resolved model revisions and
+   attention backends, and configured prompts that were not measured do not
+   change the fingerprint. Hardware and software identity are tracked
+   separately through their profile IDs.
+
+3. The pytest test auto-discovers all configs — no test code needed. CI
    picks it up on the next `/test performance` run.
 
-3. Legacy benchmarks are gated only by their static thresholds. Their current
+4. Legacy benchmarks are gated only by their static thresholds. Their current
    records skip rolling-baseline comparison and are never baseline eligible.
    V2 benchmarks with no exact comparable baseline report
    `CALIBRATION_NEEDED`; the record remains visible but does not become
@@ -546,16 +605,16 @@ When the rolling-baseline phase runs, it emits:
    reviewed and seeded through the prepare, review, and conditional-upload
    steps in the `reseed-performance-baseline` skill.
 
-4. If the benchmark targets a GPU not currently in `thresholds`, either add
+5. If the benchmark targets a GPU not currently in `thresholds`, either add
    that GPU as a key or rely on the `default` block. Note that `default` is
    intended for slower fallback GPUs, so its values should be relaxed
    relative to the fastest entry.
 
-5. Add component thresholds only when the stage timing is stable enough to be
+6. Add component thresholds only when the stage timing is stable enough to be
    a useful fixed gate. The rolling baseline will still track component times
    when static component thresholds are omitted.
 
-6. Omit `regression_thresholds` to use the default rolling-baseline policy, or
+7. Omit `regression_thresholds` to use the default rolling-baseline policy, or
    include only benchmark-specific deviations. Tune these independently from
    the fixed thresholds when a metric is noisy or should be informational. The
    fixed `thresholds` block is an absolute pytest ceiling. The
@@ -570,6 +629,20 @@ the v2 run passes, but its normalized record remains
 normalized artifact, then follow the `reseed-performance-baseline` skill. The
 utility only prepares a digest-protected manifest; the separately confirmed
 upload rechecks remote state and commits the batch atomically.
+
+**`RECIPE_MISMATCH` / "recipe_fingerprint does not match baseline records"** —
+the same workload, variant, and benchmark version already has trusted records
+for another declared recipe, even if those records use a different hardware or
+software profile. Compare the `recipe` payload and `recipe_fingerprint` in the
+current normalized artifact with the trusted record. Restore the previous
+config when the change was accidental. For an intentional recipe or quality
+family within the same workload, create a new `variant_id`. If the change
+alters the workload family or modality, create a new `workload_id` and choose
+the appropriate variant within it. For a measurement-protocol or fingerprint
+schema change that preserves the conceptual variant, increment
+`benchmark_version`. Any intentional identity change produces
+`CALIBRATION_NEEDED` and must follow the reviewed first-baseline workflow. Do
+not seed or reseed a mismatched artifact to bypass the trusted recipe identity.
 
 **Persistent failure right after a torch / kernel / image upgrade** —
 genuine regression *or* baseline drift. Compare the failing normalized record
