@@ -92,7 +92,17 @@ def _load_pr_test_module(monkeypatch,
             monkeypatch.setenv("BUILDKITE", "true")
             monkeypatch.setenv("BUILDKITE_COMMIT", buildkite_commit)
 
-        def fake_run(command, **_kwargs):
+        def fake_run(command, **kwargs):
+            if command[1:4] == ["ls-files", "-z", "--cached"]:
+                repo_root = Path(__file__).resolve().parents[3]
+                if Path(kwargs["cwd"]) == repo_root:
+                    stdout = (b"fastvideo/__init__.py\0"
+                              b".agents/skills/add-model/SKILL.md\0")
+                else:
+                    stdout = b"include/sentinel\0"
+                return types.SimpleNamespace(returncode=0,
+                                             stdout=stdout,
+                                             stderr=b"")
             if command[:3] == ["git", "rev-parse", "--verify"]:
                 revisions = {
                     "HEAD^{commit}",
@@ -127,7 +137,8 @@ def test_manual_runtime_source_attachment_needs_no_buildkite_metadata(
         monkeypatch):
     module = _load_pr_test_module(monkeypatch, is_local=True)
 
-    assert module.ci_env_secret.values["BUILDKITE_COMMIT"] == COMMIT
+    assert module.ci_env_secret.values["BUILDKITE_COMMIT"] == ""
+    assert module.ci_env_secret.values["FASTVIDEO_SOURCE_COMMIT"] == COMMIT
 
     for attached_image in (module.image, module.dreamverse_image):
         assert attached_image.operations[-1][0] == "add_local_dir"
@@ -144,7 +155,9 @@ def test_runtime_source_attachment_is_last_image_operation(monkeypatch):
         assert Path(args[0]) == module.LOCAL_REPO_ROOT
         assert kwargs["remote_path"] == "/src/FastVideo"
         assert kwargs["copy"] is False
-        assert kwargs["ignore"] is module._ignore_local_source
+        assert not kwargs["ignore"](module.LOCAL_REPO_ROOT /
+                                    "fastvideo/__init__.py")
+        assert kwargs["ignore"](module.LOCAL_REPO_ROOT / ".env.local")
         assert all(
             name != "add_local_dir"
             for name, _, _ in attached_image.operations[:-1])
@@ -152,6 +165,8 @@ def test_runtime_source_attachment_is_last_image_operation(monkeypatch):
     assert any(
         name == "apt_install" and "nodejs" in args
         for name, args, _ in module.dreamverse_image.operations)
+    assert module.ci_env_secret.values["BUILDKITE_COMMIT"] == COMMIT
+    assert module.ci_env_secret.values["FASTVIDEO_SOURCE_COMMIT"] == COMMIT
 
 
 def test_buildkite_symbolic_revision_resolves_to_commit(monkeypatch):
@@ -165,13 +180,78 @@ def test_buildkite_symbolic_revision_resolves_to_commit(monkeypatch):
 
 def test_source_ignore_excludes_git_and_handoff_state(monkeypatch):
     module = _load_pr_test_module(monkeypatch)
+    repo_root = Path("/repo")
+    included_paths = frozenset({
+        Path("."),
+        Path(".agents"),
+        Path(".agents/skills"),
+        Path(".agents/skills/add-model"),
+        Path(".agents/skills/add-model/SKILL.md"),
+        Path("fastvideo"),
+        Path("fastvideo/__init__.py"),
+    })
 
-    assert module._ignore_local_source(Path(".git/config"))
-    assert module._ignore_local_source(Path("fastvideo-kernel/include/tk/.git"))
-    assert module._ignore_local_source(
-        Path(".agents/handoffs/issue-1611-handoff.md"))
-    assert not module._ignore_local_source(Path(".agents/skills/add-model/SKILL.md"))
-    assert not module._ignore_local_source(Path("fastvideo/__init__.py"))
+    def is_ignored(path):
+        return module._ignore_local_source(path,
+                                           repo_root=repo_root,
+                                           included_paths=included_paths)
+
+    assert is_ignored(Path(".git/config"))
+    assert is_ignored(Path("fastvideo-kernel/include/tk/.git"))
+    assert is_ignored(Path(".agents/handoffs/issue-1611-handoff.md"))
+    assert not is_ignored(Path(".agents/skills/add-model/SKILL.md"))
+    assert not is_ignored(Path("fastvideo/__init__.py"))
+    assert is_ignored(Path("ignored-output.bin"))
+
+
+def test_source_allowlist_excludes_gitignored_secret(monkeypatch, tmp_path):
+    module = _load_pr_test_module(monkeypatch)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo_root, check=True)
+
+    (repo_root / ".gitignore").write_text(".env.local\n.venv/\n",
+                                           encoding="utf-8")
+    (repo_root / "tracked.py").write_text("TRACKED = True\n", encoding="utf-8")
+    (repo_root / "manual_change.py").write_text("DIRTY = True\n",
+                                                  encoding="utf-8")
+    (repo_root / ".env.local").write_text("TOKEN=secret\n", encoding="utf-8")
+    (repo_root / ".venv").mkdir()
+    (repo_root / ".venv/credential").write_text("secret\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore", "tracked.py"],
+                   cwd=repo_root,
+                   check=True)
+
+    is_ignored = module._build_local_source_ignore(repo_root)
+
+    assert not is_ignored(repo_root / "tracked.py")
+    assert not is_ignored(repo_root / "manual_change.py")
+    assert is_ignored(repo_root / ".env.local")
+    assert is_ignored(repo_root / ".venv")
+    assert is_ignored(repo_root / ".venv/credential")
+
+
+def test_source_allowlist_includes_initialized_submodule_files(monkeypatch):
+    module = _load_pr_test_module(monkeypatch)
+    repo_root = Path("/repo")
+    submodule_root = repo_root / "vendor/library"
+
+    def fake_git_paths(path, *_args):
+        if path == repo_root:
+            return (Path("tracked.py"), Path("vendor/library"))
+        if path == submodule_root:
+            return (Path("include/library.h"), )
+        raise AssertionError(path)
+
+    monkeypatch.setattr(module, "_run_git_paths", fake_git_paths)
+    monkeypatch.setattr(
+        module, "_run_git",
+        lambda *_args: " abcdef vendor/library (heads/main)")
+
+    included_paths = module._collect_local_source_paths(repo_root)
+
+    assert Path("vendor/library/include/library.h") in included_paths
+    assert Path("vendor/library/include") in included_paths
 
 
 def test_local_source_validation_accepts_exact_clean_checkout(monkeypatch):

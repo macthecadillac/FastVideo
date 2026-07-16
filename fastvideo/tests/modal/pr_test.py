@@ -3,6 +3,8 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import modal
@@ -28,6 +30,20 @@ def _run_git(repo_root: Path, *args: str) -> str:
             f"git {' '.join(args)} failed with exit code {result.returncode}: "
             f"{result.stderr.strip()}")
     return result.stdout.strip()
+
+
+def _run_git_paths(repo_root: Path, *args: str) -> tuple[Path, ...]:
+    result = subprocess.run(["git", *args],
+                            cwd=repo_root,
+                            capture_output=True,
+                            check=False)
+    if result.returncode != 0:
+        stderr = os.fsdecode(result.stderr).strip()
+        raise RuntimeError(
+            f"git {' '.join(args)} failed with exit code {result.returncode}: "
+            f"{stderr}")
+    return tuple(
+        Path(os.fsdecode(path)) for path in result.stdout.split(b"\0") if path)
 
 
 def _validate_local_source_checkout(repo_root: Path,
@@ -68,19 +84,65 @@ def _validate_local_source_checkout(repo_root: Path,
     return actual_commit
 
 
-def _ignore_local_source(path: Path) -> bool:
-    parts = path.parts
-    return ".git" in parts or any(
-        parts[index:index + 2] == (".agents", "handoffs")
-        for index in range(len(parts) - 1))
+def _submodule_paths(submodule_status: str) -> tuple[Path, ...]:
+    paths = []
+    for line in submodule_status.splitlines():
+        if not line:
+            continue
+        _, path_and_description = line[1:].split(maxsplit=1)
+        paths.append(Path(path_and_description.rsplit(" (", maxsplit=1)[0]))
+    return tuple(paths)
+
+
+def _collect_local_source_paths(repo_root: Path) -> frozenset[Path]:
+    paths = set(
+        _run_git_paths(repo_root, "ls-files", "-z", "--cached", "--others",
+                       "--exclude-standard"))
+    submodule_status = _run_git(repo_root, "submodule", "status", "--recursive")
+    for submodule_path in _submodule_paths(submodule_status):
+        submodule_root = repo_root / submodule_path
+        paths.update(submodule_path / path for path in _run_git_paths(
+            submodule_root, "ls-files", "-z", "--cached", "--others",
+            "--exclude-standard"))
+
+    included_paths = {Path(".")}
+    for path in paths:
+        included_paths.add(path)
+        included_paths.update(parent for parent in path.parents
+                              if parent != Path("."))
+    return frozenset(included_paths)
+
+
+def _ignore_local_source(path: Path, *, repo_root: Path,
+                         included_paths: frozenset[Path]) -> bool:
+    try:
+        relative_path = path.relative_to(repo_root) if path.is_absolute() else path
+    except ValueError:
+        return True
+
+    parts = relative_path.parts
+    if ".git" in parts or any(
+            parts[index:index + 2] == (".agents", "handoffs")
+            for index in range(len(parts) - 1)):
+        return True
+    return relative_path not in included_paths
+
+
+def _build_local_source_ignore(repo_root: Path) -> Callable[[Path], bool]:
+    return partial(_ignore_local_source,
+                   repo_root=repo_root,
+                   included_paths=_collect_local_source_paths(repo_root))
 
 
 def _attach_local_source(image: modal.Image,
-                         repo_root: Path = LOCAL_REPO_ROOT) -> modal.Image:
+                         repo_root: Path = LOCAL_REPO_ROOT,
+                         ignore: Callable[[Path], bool] | None = None) -> modal.Image:
+    if ignore is None:
+        ignore = _build_local_source_ignore(repo_root)
     return image.add_local_dir(repo_root,
                                remote_path=str(SOURCE_ROOT),
                                copy=False,
-                               ignore=_ignore_local_source)
+                               ignore=ignore)
 
 
 def _prepare_workspace(source_root: Path = SOURCE_ROOT,
@@ -159,14 +221,18 @@ dreamverse_base_image = (base_image.run_commands(
 
 # Runtime attachments are deliberately added after every image build step.
 # Source changes update the mount without rebuilding either shared base image.
+buildkite_launch = os.environ.get("BUILDKITE") == "true"
 source_commit = os.environ.get("BUILDKITE_COMMIT", "")
+ci_commit = source_commit
 if modal.is_local():
-    expected_revision = (source_commit
-                         if os.environ.get("BUILDKITE") == "true" else None)
+    expected_revision = source_commit if buildkite_launch else None
     source_commit = _validate_local_source_checkout(LOCAL_REPO_ROOT,
                                                     expected_revision)
-    image = _attach_local_source(base_image)
-    dreamverse_image = _attach_local_source(dreamverse_base_image)
+    source_ignore = _build_local_source_ignore(LOCAL_REPO_ROOT)
+    image = _attach_local_source(base_image, ignore=source_ignore)
+    dreamverse_image = _attach_local_source(dreamverse_base_image,
+                                            ignore=source_ignore)
+    ci_commit = source_commit if buildkite_launch else ""
 else:
     image = base_image
     dreamverse_image = dreamverse_base_image
@@ -179,7 +245,7 @@ else:
 # changes.
 ci_env_secret = modal.Secret.from_dict({
     "BUILDKITE_REPO": os.environ.get("BUILDKITE_REPO", ""),
-    "BUILDKITE_COMMIT": source_commit,
+    "BUILDKITE_COMMIT": ci_commit,
     "BUILDKITE_PULL_REQUEST": os.environ.get("BUILDKITE_PULL_REQUEST", ""),
     "BUILDKITE_BRANCH": os.environ.get("BUILDKITE_BRANCH", ""),
     "BUILDKITE_SOURCE": os.environ.get("BUILDKITE_SOURCE", ""),
@@ -189,6 +255,7 @@ ci_env_secret = modal.Secret.from_dict({
     "TEST_SCOPE": os.environ.get("TEST_SCOPE", ""),
     "IMAGE_VERSION": image_version,
     "FASTVIDEO_CONTAINER_IMAGE_REF": image_ref,
+    "FASTVIDEO_SOURCE_COMMIT": source_commit,
     **{
         key: os.environ[key]
         for key in (
@@ -234,7 +301,14 @@ def run_test_command(test_command: str,
     that manage their own installs.
     """
     git_commit = os.environ.get("BUILDKITE_COMMIT", "")
-    print(f"Using attached source checkout at commit {git_commit}", flush=True)
+    source_commit = os.environ.get("FASTVIDEO_SOURCE_COMMIT", "")
+    if git_commit:
+        print(f"Using attached Buildkite checkout at commit {git_commit}",
+              flush=True)
+    else:
+        print(f"Using attached local source based on commit {source_commit}; "
+              "the working tree may contain changes",
+              flush=True)
     _prepare_workspace()
 
     build_kernel_command = """

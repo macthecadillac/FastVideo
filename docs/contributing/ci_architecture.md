@@ -242,7 +242,9 @@ writable build and test output between containers.
 
 Manual Modal launches attach the current working tree instead. They do not
 require Buildkite metadata or a clean checkout, but still require initialized
-submodules.
+submodules. Git-ignored files are excluded from the attachment. Manual source
+keeps its base revision in `FASTVIDEO_SOURCE_COMMIT` while leaving
+`BUILDKITE_COMMIT` empty so performance results retain local-run provenance.
 
 The runtime attachment excludes Git metadata. Required submodule contents must
 therefore be present in the Buildkite checkout. The SSIM orchestrator has its
