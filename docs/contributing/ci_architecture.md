@@ -240,6 +240,10 @@ ephemeral `/workspace/FastVideo` before installation, kernel compilation, or
 tests. This keeps every lane on the exact Buildkite revision while isolating
 writable build and test output between containers.
 
+Manual Modal launches attach the current working tree instead. They do not
+require Buildkite metadata or a clean checkout, but still require initialized
+submodules.
+
 The runtime attachment excludes Git metadata. Required submodule contents must
 therefore be present in the Buildkite checkout. The SSIM orchestrator has its
 own partitioned workspace preparation in `fastvideo/tests/modal/ssim_test.py`

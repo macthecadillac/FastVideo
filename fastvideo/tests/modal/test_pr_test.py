@@ -48,9 +48,12 @@ class _FakeVolume:
 
 class _FakeSecret:
 
+    def __init__(self, values):
+        self.values = values
+
     @classmethod
-    def from_dict(cls, *_args, **_kwargs):
-        return cls()
+    def from_dict(cls, values, **_kwargs):
+        return cls(values)
 
 
 class _FakeApp:
@@ -63,7 +66,11 @@ class _FakeApp:
         return decorator
 
 
-def _load_pr_test_module(monkeypatch, *, is_local=False):
+def _load_pr_test_module(monkeypatch,
+                         *,
+                         is_local=False,
+                         buildkite=False,
+                         buildkite_commit=COMMIT):
     fake_modal = types.SimpleNamespace(
         App=lambda: _FakeApp(),
         Image=_FakeImage,
@@ -78,11 +85,21 @@ def _load_pr_test_module(monkeypatch, *, is_local=False):
     monkeypatch.setitem(sys.modules, "modal", fake_modal)
     monkeypatch.setitem(sys.modules, "modal_image_utils", fake_image_utils)
 
+    monkeypatch.delenv("BUILDKITE", raising=False)
+    monkeypatch.delenv("BUILDKITE_COMMIT", raising=False)
     if is_local:
-        monkeypatch.setenv("BUILDKITE_COMMIT", COMMIT)
+        if buildkite:
+            monkeypatch.setenv("BUILDKITE", "true")
+            monkeypatch.setenv("BUILDKITE_COMMIT", buildkite_commit)
 
         def fake_run(command, **_kwargs):
-            if command[:3] == ["git", "rev-parse", "HEAD"]:
+            if command[:3] == ["git", "rev-parse", "--verify"]:
+                revisions = {
+                    "HEAD^{commit}",
+                    f"{buildkite_commit}^{{commit}}",
+                }
+                if command[3] not in revisions:
+                    raise AssertionError(f"Unexpected revision: {command}")
                 stdout = COMMIT
             elif command[:2] == ["git", "status"]:
                 stdout = ""
@@ -106,8 +123,20 @@ def _load_pr_test_module(monkeypatch, *, is_local=False):
     return module
 
 
-def test_runtime_source_attachment_is_last_image_operation(monkeypatch):
+def test_manual_runtime_source_attachment_needs_no_buildkite_metadata(
+        monkeypatch):
     module = _load_pr_test_module(monkeypatch, is_local=True)
+
+    assert module.ci_env_secret.values["BUILDKITE_COMMIT"] == COMMIT
+
+    for attached_image in (module.image, module.dreamverse_image):
+        assert attached_image.operations[-1][0] == "add_local_dir"
+
+
+def test_runtime_source_attachment_is_last_image_operation(monkeypatch):
+    module = _load_pr_test_module(monkeypatch,
+                                  is_local=True,
+                                  buildkite=True)
 
     for attached_image in (module.image, module.dreamverse_image):
         operation, args, kwargs = attached_image.operations[-1]
@@ -123,6 +152,15 @@ def test_runtime_source_attachment_is_last_image_operation(monkeypatch):
     assert any(
         name == "apt_install" and "nodejs" in args
         for name, args, _ in module.dreamverse_image.operations)
+
+
+def test_buildkite_symbolic_revision_resolves_to_commit(monkeypatch):
+    module = _load_pr_test_module(monkeypatch,
+                                  is_local=True,
+                                  buildkite=True,
+                                  buildkite_commit="HEAD")
+
+    assert module.ci_env_secret.values["BUILDKITE_COMMIT"] == COMMIT
 
 
 def test_source_ignore_excludes_git_and_handoff_state(monkeypatch):
@@ -142,8 +180,10 @@ def test_local_source_validation_accepts_exact_clean_checkout(monkeypatch):
 
     def fake_git(_repo_root, *args):
         calls.append(args)
-        if args[:2] == ("rev-parse", "HEAD"):
+        if args == ("rev-parse", "--verify", "HEAD^{commit}"):
             return COMMIT.upper()
+        if args == ("rev-parse", "--verify", f"{COMMIT}^{{commit}}"):
+            return COMMIT
         if args[0] == "status":
             return ""
         if args[:2] == ("submodule", "status"):
@@ -151,11 +191,30 @@ def test_local_source_validation_accepts_exact_clean_checkout(monkeypatch):
         raise AssertionError(args)
 
     monkeypatch.setattr(module, "_run_git", fake_git)
-    module._validate_local_source_checkout(Path("/repo"), COMMIT)
+    actual_commit = module._validate_local_source_checkout(
+        Path("/repo"), COMMIT)
 
-    assert calls[0] == ("rev-parse", "HEAD")
-    assert ":(exclude).agents/handoffs/**" in calls[1]
-    assert calls[2] == ("submodule", "status", "--recursive")
+    assert actual_commit == COMMIT.upper()
+    assert calls[0] == ("rev-parse", "--verify", "HEAD^{commit}")
+    assert calls[1] == ("rev-parse", "--verify", f"{COMMIT}^{{commit}}")
+    assert ":(exclude).agents/handoffs/**" in calls[2]
+    assert calls[3] == ("submodule", "status", "--recursive")
+
+
+def test_manual_source_validation_allows_working_tree_changes(monkeypatch):
+    module = _load_pr_test_module(monkeypatch)
+
+    def fake_git(_repo_root, *args):
+        if args == ("rev-parse", "--verify", "HEAD^{commit}"):
+            return COMMIT
+        if args[:2] == ("submodule", "status"):
+            return " abc path"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(module, "_run_git", fake_git)
+
+    assert module._validate_local_source_checkout(Path("/repo"),
+                                                  None) == COMMIT
 
 
 @pytest.mark.parametrize(
@@ -173,8 +232,10 @@ def test_local_source_validation_rejects_invalid_checkout(
     module = _load_pr_test_module(monkeypatch)
 
     def fake_git(_repo_root, *args):
-        if args[:2] == ("rev-parse", "HEAD"):
+        if args == ("rev-parse", "--verify", "HEAD^{commit}"):
             return actual_commit
+        if args == ("rev-parse", "--verify", f"{COMMIT}^{{commit}}"):
+            return COMMIT
         if args[0] == "status":
             return status
         if args[:2] == ("submodule", "status"):
@@ -184,6 +245,16 @@ def test_local_source_validation_rejects_invalid_checkout(
     monkeypatch.setattr(module, "_run_git", fake_git)
     with pytest.raises(RuntimeError, match=error):
         module._validate_local_source_checkout(Path("/repo"), COMMIT)
+
+
+def test_buildkite_source_validation_requires_revision(monkeypatch):
+    module = _load_pr_test_module(monkeypatch)
+    monkeypatch.setattr(
+        module, "_run_git",
+        lambda *_args: pytest.fail("Git should not run without a revision"))
+
+    with pytest.raises(RuntimeError, match="BUILDKITE_COMMIT is required"):
+        module._validate_local_source_checkout(Path("/repo"), "")
 
 
 def _make_source_tree(module, root):

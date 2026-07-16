@@ -1,5 +1,4 @@
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -32,23 +31,29 @@ def _run_git(repo_root: Path, *args: str) -> str:
 
 
 def _validate_local_source_checkout(repo_root: Path,
-                                    expected_commit: str) -> None:
-    if re.fullmatch(r"[0-9a-fA-F]{40}", expected_commit) is None:
+                                    expected_revision: str | None) -> str:
+    if expected_revision is not None and not expected_revision:
         raise RuntimeError(
-            f"BUILDKITE_COMMIT must be a full 40-character SHA: {expected_commit!r}"
+            "BUILDKITE_COMMIT is required when running under Buildkite"
         )
 
-    actual_commit = _run_git(repo_root, "rev-parse", "HEAD")
-    if actual_commit.lower() != expected_commit.lower():
-        raise RuntimeError(
-            f"Buildkite checkout mismatch: HEAD is {actual_commit}, expected {expected_commit}"
-        )
+    actual_commit = _run_git(repo_root, "rev-parse", "--verify",
+                             "HEAD^{commit}")
+    if expected_revision is not None:
+        expected_commit = _run_git(repo_root, "rev-parse", "--verify",
+                                   f"{expected_revision}^{{commit}}")
+        if actual_commit.lower() != expected_commit.lower():
+            raise RuntimeError(
+                f"Buildkite checkout mismatch: HEAD is {actual_commit}, "
+                f"expected {expected_commit}")
 
-    status = _run_git(repo_root, "status", "--short", "--untracked-files=all",
-                      "--", ".", ":(exclude).agents/handoffs/**")
-    if status:
-        raise RuntimeError(
-            f"Buildkite checkout contains uncommitted source changes:\n{status}")
+        status = _run_git(repo_root, "status", "--short",
+                          "--untracked-files=all", "--", ".",
+                          ":(exclude).agents/handoffs/**")
+        if status:
+            raise RuntimeError(
+                "Buildkite checkout contains uncommitted source changes:\n" +
+                status)
 
     submodule_status = _run_git(repo_root, "submodule", "status", "--recursive")
     invalid_submodules = [
@@ -59,6 +64,8 @@ def _validate_local_source_checkout(repo_root: Path,
         raise RuntimeError(
             "Buildkite checkout has missing or mismatched submodules:\n" +
             "\n".join(invalid_submodules))
+
+    return actual_commit
 
 
 def _ignore_local_source(path: Path) -> bool:
@@ -152,9 +159,12 @@ dreamverse_base_image = (base_image.run_commands(
 
 # Runtime attachments are deliberately added after every image build step.
 # Source changes update the mount without rebuilding either shared base image.
+source_commit = os.environ.get("BUILDKITE_COMMIT", "")
 if modal.is_local():
-    _validate_local_source_checkout(
-        LOCAL_REPO_ROOT, os.environ.get("BUILDKITE_COMMIT", ""))
+    expected_revision = (source_commit
+                         if os.environ.get("BUILDKITE") == "true" else None)
+    source_commit = _validate_local_source_checkout(LOCAL_REPO_ROOT,
+                                                    expected_revision)
     image = _attach_local_source(base_image)
     dreamverse_image = _attach_local_source(dreamverse_base_image)
 else:
@@ -169,7 +179,7 @@ else:
 # changes.
 ci_env_secret = modal.Secret.from_dict({
     "BUILDKITE_REPO": os.environ.get("BUILDKITE_REPO", ""),
-    "BUILDKITE_COMMIT": os.environ.get("BUILDKITE_COMMIT", ""),
+    "BUILDKITE_COMMIT": source_commit,
     "BUILDKITE_PULL_REQUEST": os.environ.get("BUILDKITE_PULL_REQUEST", ""),
     "BUILDKITE_BRANCH": os.environ.get("BUILDKITE_BRANCH", ""),
     "BUILDKITE_SOURCE": os.environ.get("BUILDKITE_SOURCE", ""),
@@ -224,8 +234,7 @@ def run_test_command(test_command: str,
     that manage their own installs.
     """
     git_commit = os.environ.get("BUILDKITE_COMMIT", "")
-    print(f"Using attached Buildkite checkout at commit {git_commit}",
-          flush=True)
+    print(f"Using attached source checkout at commit {git_commit}", flush=True)
     _prepare_workspace()
 
     build_kernel_command = """
