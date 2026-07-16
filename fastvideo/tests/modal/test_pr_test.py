@@ -133,6 +133,15 @@ def _load_pr_test_module(monkeypatch,
     return module
 
 
+def test_remote_entrypoint_import_uses_attached_source_root(monkeypatch):
+    module = _load_pr_test_module(monkeypatch)
+
+    assert module._resolve_local_repo_root(Path("/root/pr_test.py"),
+                                           False) == module.SOURCE_ROOT
+    assert module._resolve_local_repo_root(
+        Path("/repo/fastvideo/tests/modal/pr_test.py"), True) == Path("/repo")
+
+
 def test_manual_runtime_source_attachment_needs_no_buildkite_metadata(
         monkeypatch):
     module = _load_pr_test_module(monkeypatch, is_local=True)

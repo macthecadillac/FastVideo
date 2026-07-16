@@ -9,9 +9,15 @@ from pathlib import Path
 
 import modal
 
-LOCAL_REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_ROOT = Path("/src/FastVideo")
 WORKSPACE_ROOT = Path("/workspace/FastVideo")
+
+
+def _resolve_local_repo_root(module_path: Path, is_local: bool) -> Path:
+    return module_path.resolve().parents[3] if is_local else SOURCE_ROOT
+
+
+LOCAL_REPO_ROOT = _resolve_local_repo_root(Path(__file__), modal.is_local())
 REQUIRED_SOURCE_DIRS = (
     Path("fastvideo-kernel/include/cutlass/include"),
     Path("fastvideo-kernel/include/tk/include"),
