@@ -290,7 +290,9 @@ def normalize_performance_result(result: dict[str, Any]) -> dict[str, Any]:
     if not timestamp:
         timestamp = datetime.now(timezone.utc).isoformat()
 
-    commit_sha = result.get("commit") or os.environ.get("BUILDKITE_COMMIT", "")
+    commit_sha = (result.get("commit")
+                  or os.environ.get("BUILDKITE_COMMIT")
+                  or os.environ.get("FASTVIDEO_SOURCE_COMMIT", ""))
     latency = safe_float(result.get("avg_generation_time_s"))
     throughput = safe_float(result.get("throughput_fps"))
     memory = safe_float(result.get("max_peak_memory_mb"))

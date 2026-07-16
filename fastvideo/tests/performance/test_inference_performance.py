@@ -513,7 +513,8 @@ def _build_result_record(
         "individual_peak_memories_mb": [round(m, 1) for m in peak_memories],
         "thresholds": dict(thresholds),
         "regression_thresholds": cfg.get("regression_thresholds", {}),
-        "commit": os.environ.get("BUILDKITE_COMMIT", ""),
+        "commit": (os.environ.get("BUILDKITE_COMMIT")
+                   or os.environ.get("FASTVIDEO_SOURCE_COMMIT", "")),
         **_ci_provenance_fields(),
         "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
         **_configured_result_metadata(cfg),

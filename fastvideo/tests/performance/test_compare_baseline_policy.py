@@ -183,6 +183,24 @@ def test_normalized_record_includes_source_metadata(monkeypatch):
     assert record["job_id"] == "job-1"
 
 
+def test_normalized_local_record_preserves_source_base_revision(monkeypatch):
+    source_commit = "b" * 40
+    monkeypatch.delenv("BUILDKITE_COMMIT", raising=False)
+    monkeypatch.delenv("BUILDKITE_PULL_REQUEST", raising=False)
+    monkeypatch.delenv("PERF_RUN_SOURCE", raising=False)
+    monkeypatch.delenv("BUILDKITE_BRANCH", raising=False)
+    monkeypatch.delenv("TEST_SCOPE", raising=False)
+    monkeypatch.setenv("FASTVIDEO_SOURCE_COMMIT", source_commit)
+    raw = _raw_result()
+    raw["commit"] = ""
+    raw["pr_number"] = ""
+
+    record = compare_baseline.normalize_performance_result(raw)
+
+    assert record["commit_sha"] == source_commit
+    assert record["run_source"] == "local"
+
+
 def test_normalized_record_includes_effective_regression_thresholds(monkeypatch):
     monkeypatch.setenv("PERF_RUN_SOURCE", "pr")
     raw = _raw_result()

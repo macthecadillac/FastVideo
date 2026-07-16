@@ -453,6 +453,7 @@ FlashInfer, Cutlass DSL, SageAttention, Triton, and xFormers when installed.
 | `PERF_PYTEST_RC` | unset | `compare_baseline.py` | Performance pytest exit code. Measured static-threshold failures are attributed per record; otherwise a nonzero code reports an infrastructure error. |
 | `TEST_SCOPE` | unset | `compare_baseline.py` | CI context used to infer scheduled-main runs together with `BUILDKITE_BRANCH=main`. |
 | `BUILDKITE_BRANCH`, `BUILDKITE_COMMIT`, `BUILDKITE_PULL_REQUEST` | unset | `compare_baseline.py`, `test_inference_performance.py` | CI metadata stamped into records. |
+| `FASTVIDEO_SOURCE_COMMIT` | unset | `pr_test.py`, `compare_baseline.py`, `test_inference_performance.py` | Base revision stamped into manual Modal performance records without changing their local-run provenance. |
 | `DASHBOARD_DAYS` | `30` | `dashboard.py` | Lookback window for the Plotly trend pages. |
 | `PERFORMANCE_TRACKING_SYNC_REUSE_TTL_SECONDS` | `3600` | `fastvideo/performance/hf_store.py` | Freshness window for reusing an existing HF sync when requested by dashboard consumers. |
 | `FASTVIDEO_ATTENTION_BACKEND` | `auto` | `test_inference_performance.py` | Requested attention backend included in `software_profile_id`. |

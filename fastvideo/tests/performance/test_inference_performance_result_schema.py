@@ -136,6 +136,35 @@ def test_build_result_record_emits_v2_wan_shape(monkeypatch):
     assert record["vae_decode_time_s"] == 3.2
 
 
+def test_build_result_record_preserves_manual_source_base_revision(monkeypatch):
+    source_commit = "b" * 40
+    monkeypatch.delenv("BUILDKITE_COMMIT", raising=False)
+    monkeypatch.delenv("PERF_RUN_SOURCE", raising=False)
+    monkeypatch.delenv("BUILDKITE_BRANCH", raising=False)
+    monkeypatch.delenv("TEST_SCOPE", raising=False)
+    monkeypatch.setenv("FASTVIDEO_SOURCE_COMMIT", source_commit)
+    monkeypatch.setattr(perf_test, "_build_identity_fields", lambda *_args: _identity_fields())
+
+    record = perf_test._build_result_record(
+        cfg=_benchmark_config(),
+        model_info={"model_short_name": "Wan2.1-T2V-1.3B"},
+        init_kwargs={"num_gpus": 2},
+        gen_kwargs={"num_frames": 45},
+        num_warmup=0,
+        num_measure=1,
+        thresholds={},
+        times=[30.0],
+        peak_memories=[10000.0],
+        all_component_times=[{}],
+        prompt="A cinematic video.",
+        runtime_identity={},
+        device_name="NVIDIA L40S",
+    )
+
+    assert record["commit"] == source_commit
+    assert record["run_source"] == "local"
+
+
 def test_validate_run_counts_rejects_zero_measurement_runs():
     with pytest.raises(ValueError, match="num_measurement_runs"):
         perf_test._validate_run_counts({
