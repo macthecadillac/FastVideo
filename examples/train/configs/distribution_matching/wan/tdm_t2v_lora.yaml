@@ -117,6 +117,7 @@ training:
     checkpoints_total_limit: 3
 
   tracker:
+    trackers: [wandb, jsonl]
     project_name: distillation_wan
     run_name: wan2.1_tdm_lora_4steps
 
